@@ -1,45 +1,45 @@
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, ConversationHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler
 
-# Estados del bot
+# Estados del bot para el flujo de conversación
 TEXT_TO_REPLACE, NEW_TEXT, WAITING_FOR_POSTS = range(3)
 
 # ID del usuario autorizado (cambia esto por tu ID de Telegram)
-AUTHORIZED_USER_ID = 1376071083  # Reemplázalo con tu ID de Telegram
+AUTHORIZED_USER_ID = 1376071083  # Reemplázalo con tu ID real
 
 # Diccionario para almacenar datos del usuario
 user_data = {}
 
 # Comando /start para configurar el reemplazo
-def start(update: Update, context: CallbackContext) -> int:
+async def start(update: Update, context: CallbackContext) -> int:
     if update.message.from_user.id != AUTHORIZED_USER_ID:
-        update.message.reply_text("🚫 No tienes permiso para usar este bot.")
+        await update.message.reply_text("🚫 No tienes permiso para usar este bot.")
         return ConversationHandler.END
     
-    update.message.reply_text("¡Hola! 🤖 ¿Qué texto deseas reemplazar?")
+    await update.message.reply_text("¡Hola! 🤖 ¿Qué texto deseas reemplazar?")
     return TEXT_TO_REPLACE
 
 # Capturar el texto a reemplazar
-def set_text_to_replace(update: Update, context: CallbackContext) -> int:
+async def set_text_to_replace(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
     user_data[user_id] = {'text_to_replace': update.message.text}
-    update.message.reply_text(f"✅ Entendido. Voy a reemplazar '{update.message.text}'. Ahora dime el nuevo texto que pondré en su lugar.")
+    await update.message.reply_text(f"✅ Entendido. Voy a reemplazar '{update.message.text}'. Ahora dime el nuevo texto que pondré en su lugar.")
     return NEW_TEXT
 
 # Capturar el nuevo texto a usar
-def set_new_text(update: Update, context: CallbackContext) -> int:
+async def set_new_text(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
     user_data[user_id]['new_text'] = update.message.text
-    update.message.reply_text(
+    await update.message.reply_text(
         f"✅ Perfecto. Reemplazaré '{user_data[user_id]['text_to_replace']}' por '{update.message.text}'. Ahora reenvíame los posts para procesarlos."
     )
     return WAITING_FOR_POSTS
 
 # Procesar los posts reenviados (texto, imágenes y videos)
-def process_posts(update: Update, context: CallbackContext) -> None:
+async def process_posts(update: Update, context: CallbackContext) -> None:
     user_id = update.message.from_user.id
     if user_id not in user_data:
-        update.message.reply_text("⚠️ Debes configurar primero el reemplazo con /start.")
+        await update.message.reply_text("⚠️ Debes configurar primero el reemplazo con /start.")
         return
 
     # Recupera el texto a reemplazar y el nuevo texto
@@ -54,58 +54,56 @@ def process_posts(update: Update, context: CallbackContext) -> None:
 
         # Si el mensaje contiene un video
         if update.message.video:
-            context.bot.send_video(
+            await context.bot.send_video(
                 chat_id=update.message.chat_id,
                 video=update.message.video.file_id,
                 caption=replaced_text
             )
         # Si el mensaje contiene una imagen
         elif update.message.photo:
-            context.bot.send_photo(
+            await context.bot.send_photo(
                 chat_id=update.message.chat_id,
                 photo=update.message.photo[-1].file_id,
                 caption=replaced_text
             )
         # Si el mensaje contiene solo texto
         else:
-            update.message.reply_text(replaced_text)
+            await update.message.reply_text(replaced_text)
 
         # Elimina el mensaje original
         try:
-            context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
+            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
         except Exception as e:
             print(f"⚠️ Error al eliminar el mensaje: {e}")
     else:
-        update.message.reply_text(f"⚠️ No encontré el texto '{text_to_replace}' en el mensaje.")
+        await update.message.reply_text(f"⚠️ No encontré el texto '{text_to_replace}' en el mensaje.")
 
 # Cancelar la configuración
-def cancel(update: Update, context: CallbackContext) -> int:
-    update.message.reply_text("❌ Configuración cancelada. Usa /start para intentarlo de nuevo.")
+async def cancel(update: Update, context: CallbackContext) -> int:
+    await update.message.reply_text("❌ Configuración cancelada. Usa /start para intentarlo de nuevo.")
     return ConversationHandler.END
 
 # Configuración principal del bot
 def main():
-    TOKEN = '7546816632:AAHGHIfOmAgug6JTZ54XvVPo83zKeAdbFFk'  # Reemplázalo con tu token del Bot de Telegram
+    TOKEN = '7546816632:AAHGHIfOmAgug6JTZ54XvVPo83zKeAdbFFk'  # Reemplázalo con tu token de BotFather
 
-    updater = Updater(TOKEN)
-    dispatcher = updater.dispatcher
+    application = Application.builder().token(TOKEN).build()
 
     # Configurar el flujo de conversación
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            TEXT_TO_REPLACE: [MessageHandler(Filters.text & ~Filters.command, set_text_to_replace)],
-            NEW_TEXT: [MessageHandler(Filters.text & ~Filters.command, set_new_text)],
-            WAITING_FOR_POSTS: [MessageHandler(Filters.all, process_posts)],
+            TEXT_TO_REPLACE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_text_to_replace)],
+            NEW_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_text)],
+            WAITING_FOR_POSTS: [MessageHandler(filters.ALL, process_posts)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
     )
 
-    dispatcher.add_handler(conv_handler)
+    application.add_handler(conv_handler)
 
     # Iniciar el bot
-    updater.start_polling()
-    updater.idle()
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
