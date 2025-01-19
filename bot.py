@@ -5,7 +5,7 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Callb
 TEXT_TO_REPLACE, NEW_TEXT, WAITING_FOR_POSTS = range(3)
 
 # ID del usuario autorizado (cambia esto por tu ID de Telegram)
-AUTHORIZED_USER_ID = 123456789  # Reemplázalo con tu ID de Telegram
+AUTHORIZED_USER_ID = 1376071083  # Reemplázalo con tu ID de Telegram
 
 # Diccionario para almacenar datos del usuario
 user_data = {}
@@ -85,7 +85,7 @@ def cancel(update: Update, context: CallbackContext) -> int:
 
 # Configuración principal del bot
 def main():
-    TOKEN = 'TU_TOKEN_DE_API'  # Reemplázalo con tu token del Bot de Telegram
+    TOKEN = '7546816632:AAHGHIfOmAgug6JTZ54XvVPo83zKeAdbFFk'  # Reemplázalo con tu token del Bot de Telegram
 
     updater = Updater(TOKEN)
     dispatcher = updater.dispatcher
