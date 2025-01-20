@@ -4,8 +4,11 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # Estados del bot para el flujo de conversación
 TEXT_TO_REPLACE, NEW_TEXT, WAITING_FOR_POSTS = range(3)
 
-# ID del usuario autorizado (cambia esto por tu ID de Telegram)
-AUTHORIZED_USER_ID = 1376071083  # Reemplázalo con tu ID real
+# ID del usuario autorizado (solo tú puedes usar el bot)
+AUTHORIZED_USER_ID = 1376071083  # Tu ID de Telegram
+
+# Token del bot (⚠ NO compartas este dato en público ⚠)
+TOKEN = "7546816632:AAEZm8fUiZglMKk8_cwo4WSsTfEHmxzA79c"
 
 # Diccionario para almacenar datos del usuario
 user_data = {}
@@ -42,33 +45,41 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("⚠️ Debes configurar primero el reemplazo con /start.")
         return
 
-    # Recupera el texto a reemplazar y el nuevo texto
     text_to_replace = user_data[user_id]['text_to_replace']
     new_text = user_data[user_id]['new_text']
 
-    # Procesa cada mensaje reenviado
-    original_text = update.message.caption if update.message.caption else update.message.text
+    # Extraer el texto original con formato
+    original_text = update.message.text or update.message.caption
+    entities = update.message.entities or update.message.caption_entities  # Mantiene formato
 
     if original_text and text_to_replace in original_text:
         replaced_text = original_text.replace(text_to_replace, new_text)
 
-        # Si el mensaje contiene un video
+        # Si el mensaje tiene un video
         if update.message.video:
             await context.bot.send_video(
                 chat_id=update.message.chat_id,
                 video=update.message.video.file_id,
-                caption=replaced_text
+                caption=replaced_text,
+                parse_mode=None,  # No forzamos Markdown, usamos el formato de Telegram
+                caption_entities=entities  # Mantiene el formato original
             )
-        # Si el mensaje contiene una imagen
+        # Si el mensaje tiene una imagen
         elif update.message.photo:
             await context.bot.send_photo(
                 chat_id=update.message.chat_id,
                 photo=update.message.photo[-1].file_id,
-                caption=replaced_text
+                caption=replaced_text,
+                parse_mode=None,
+                caption_entities=entities
             )
         # Si el mensaje contiene solo texto
         else:
-            await update.message.reply_text(replaced_text)
+            await update.message.reply_text(
+                replaced_text,
+                parse_mode=None,
+                entities=entities  # Mantiene el formato original
+            )
 
         # Elimina el mensaje original
         try:
@@ -85,8 +96,6 @@ async def cancel(update: Update, context: CallbackContext) -> int:
 
 # Configuración principal del bot
 def main():
-    TOKEN = '7546816632:AAHGHIfOmAgug6JTZ54XvVPo83zKeAdbFFk'  # Reemplázalo con tu token de BotFather
-
     application = Application.builder().token(TOKEN).build()
 
     # Configurar el flujo de conversación
