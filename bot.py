@@ -8,7 +8,7 @@ TEXT_TO_REPLACE, NEW_TEXT, WAITING_FOR_POSTS = range(3)
 AUTHORIZED_USER_ID = 1376071083  # Tu ID de Telegram
 
 # Token del bot (⚠ NO compartas este dato en público ⚠)
-TOKEN = "7546816632:AAEZm8fUiZglMKk8_cwo4WSsTfEHmxzA79c"
+TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"
 
 # Diccionario para almacenar datos del usuario
 user_data = {}
