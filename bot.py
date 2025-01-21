@@ -61,7 +61,7 @@ async def process_posts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 # Configuración del bot y los handlers
 def main():
-    application = Application.builder().token("TU_API_KEY_AQUÍ").build()
+    application = Application.builder().token("7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g").build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_texto))
