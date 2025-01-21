@@ -4,7 +4,10 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 # Configuración del logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+    filename="bot.log",
+    filemode="a"
 )
 
 # Diccionario para almacenar los datos del usuario
@@ -26,21 +29,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # Captura la palabra/frase a reemplazar
 async def recibir_texto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text
+    estado = context.user_data.get("estado", "")
 
     if text == "🔄 Configurar Reemplazo":
         await update.message.reply_text("✏️ Escribe la palabra o frase que deseas reemplazar:")
         context.user_data["estado"] = "esperando_texto_a_reemplazar"
 
     elif text == "❌ Cancelar":
-        context.user_data.clear()  # Elimina la configuración actual
+        context.user_data.clear()
         await update.message.reply_text("❌ Reemplazo cancelado. Escribe /start para volver al menú.")
 
-    elif context.user_data.get("estado") == "esperando_texto_a_reemplazar":
+    elif estado == "esperando_texto_a_reemplazar":
         context.user_data["texto_a_reemplazar"] = text
         context.user_data["estado"] = "esperando_nuevo_texto"
         await update.message.reply_text("✅ Ahora escribe el nuevo texto que reemplazará al anterior:")
 
-    elif context.user_data.get("estado") == "esperando_nuevo_texto":
+    elif estado == "esperando_nuevo_texto":
         context.user_data["nuevo_texto"] = text
         context.user_data["estado"] = "configuracion_completa"
         await update.message.reply_text("✅ ¡Listo! Ahora reenvíame un mensaje y lo modificaré según tu configuración.")
@@ -53,7 +57,7 @@ async def process_posts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if texto_a_reemplazar and nuevo_texto:
         mensaje = update.message.text
         mensaje_modificado = mensaje.replace(texto_a_reemplazar, nuevo_texto)
-        
+
         if mensaje != mensaje_modificado:
             await update.message.reply_text(mensaje_modificado)
     else:
