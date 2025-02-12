@@ -30,7 +30,7 @@ async def set_new_text(update: Update, context: CallbackContext) -> int:
 async def process_posts(update: Update, context: CallbackContext) -> None:
 	user_id = update.message.from_user.id
 	if user_id not in user_data:
-    	return  # Ignorar si no hay configuración de reemplazo
+    	return
 
 	text_to_replace = user_data[user_id]['text_to_replace']
 	new_text = user_data[user_id]['new_text']
