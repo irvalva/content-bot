@@ -124,7 +124,7 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
 
 # Configuración y ejecución del bot
 def main():
-	TOKEN = "CLAVE TOKEN"
+	TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"
 	application = Application.builder().token(TOKEN).build()
 
 	conv_handler = ConversationHandler(
