@@ -92,21 +92,27 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
 
 	# Procesar según el tipo de mensaje
 	if update.message.photo:
-    	await context.bot.send_photo(chat_id=update.message.chat_id,
-                                 	photo=update.message.photo[-1].file_id,
-                                 	caption=replaced_text)
+    	await context.bot.send_photo(
+        	chat_id=update.message.chat_id,
+        	photo=update.message.photo[-1].file_id,
+        	caption=replaced_text
+    	)
 	elif update.message.video:
-    	await context.bot.send_video(chat_id=update.message.chat_id,
-                                 	video=update.message.video.file_id,
-                                 	caption=replaced_text)
+    	await context.bot.send_video(
+        	chat_id=update.message.chat_id,
+        	video=update.message.video.file_id,
+        	caption=replaced_text
+    	)
 	elif update.message.text:
     	await update.message.reply_text(replaced_text)
 	else:
     	# Para otros tipos de mensaje, se usa copy_message para "repostear" sin cambios.
     	try:
-        	await context.bot.copy_message(chat_id=update.message.chat_id,
-                                       	from_chat_id=update.message.chat_id,
-                                       	message_id=update.message.message_id)
+        	await context.bot.copy_message(
+            	chat_id=update.message.chat_id,
+            	from_chat_id=update.message.chat_id,
+            	message_id=update.message.message_id
+        	)
     	except Exception:
         	pass
 
@@ -118,7 +124,7 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
 
 # Configuración y ejecución del bot
 def main():
-	TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"
+	TOKEN = "CLAVE TOKEN"
 	application = Application.builder().token(TOKEN).build()
 
 	conv_handler = ConversationHandler(
@@ -137,3 +143,5 @@ def main():
 
 if __name__ == "__main__":
 	main()
+
+
