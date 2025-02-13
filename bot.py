@@ -1,15 +1,16 @@
 import logging
+import asyncio
 from telegram import Update, InputMediaPhoto, InputMediaVideo
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
 
-# Configuración de logging (opcional)
+# Configuración del logging (opcional)
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 # Diccionario para almacenar la configuración de cada usuario.
-# Cada usuario puede definir:
+# Cada usuario define:
 #   "detect": la palabra a detectar.
 #   "replace": la palabra de reemplazo.
 user_config = {}
@@ -41,39 +42,47 @@ async def reset(update: Update, context: CallbackContext) -> None:
 async def process_posts(update: Update, context: CallbackContext) -> None:
     config = user_config.get(update.message.from_user.id)
     if not config:
-        # Si el usuario no tiene configuración, no se procesa nada.
         return
     detect = config.get("detect")
     replace = config.get("replace")
     if not detect or not replace:
         return
 
-    # Procesamiento de álbumes (media_group)
+    # Manejo de álbumes: si el mensaje tiene media_group_id, lo acumulamos
     if update.message.media_group_id:
         group_id = update.message.media_group_id
         group = context.bot_data.setdefault(group_id, [])
         group.append(update.message)
-        # Espera a que se reciban todos los mensajes del álbum
-        if len(group) < update.message.media_group_size:
-            return
+        # Usamos un diccionario interno para programar una tarea única por grupo
+        if "scheduled_album_tasks" not in context.bot_data:
+            context.bot_data["scheduled_album_tasks"] = {}
+        if group_id in context.bot_data["scheduled_album_tasks"]:
+            return  # Ya se programó la tarea para este álbum
 
-        media_list = []
-        for msg in group:
-            if msg.caption:
-                new_caption = msg.caption.replace(detect, replace) if detect in msg.caption else msg.caption
-            else:
-                new_caption = None
-            if msg.photo:
-                media_list.append(InputMediaPhoto(msg.photo[-1].file_id, caption=new_caption))
-            elif msg.video:
-                media_list.append(InputMediaVideo(msg.video.file_id, caption=new_caption))
-        await context.bot.send_media_group(chat_id=update.message.chat_id, media=media_list)
-        for msg in group:
-            try:
-                await context.bot.delete_message(chat_id=msg.chat_id, message_id=msg.message_id)
-            except Exception:
-                pass
-        context.bot_data.pop(group_id, None)
+        async def process_album():
+            await asyncio.sleep(1)  # Espera 1 segundo para recibir todas las partes del álbum
+            album = context.bot_data.pop(group_id, [])
+            context.bot_data["scheduled_album_tasks"].pop(group_id, None)
+            media_list = []
+            for msg in album:
+                if msg.caption:
+                    new_caption = msg.caption.replace(detect, replace) if detect in msg.caption else msg.caption
+                else:
+                    new_caption = None
+                if msg.photo:
+                    media_list.append(InputMediaPhoto(msg.photo[-1].file_id, caption=new_caption))
+                elif msg.video:
+                    media_list.append(InputMediaVideo(msg.video.file_id, caption=new_caption))
+            if media_list:
+                await context.bot.send_media_group(chat_id=update.message.chat_id, media=media_list)
+            for msg in album:
+                try:
+                    await context.bot.delete_message(chat_id=msg.chat_id, message_id=msg.message_id)
+                except Exception:
+                    pass
+
+        task = asyncio.create_task(process_album())
+        context.bot_data["scheduled_album_tasks"][group_id] = task
         return
 
     # Procesamiento de mensajes individuales
@@ -117,13 +126,12 @@ def main():
     TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reemplaza con el token real de tu bot
     app = Application.builder().token(TOKEN).build()
 
-    # Agregar los handlers de comandos y mensajes
+    # Registrar comandos
     app.add_handler(CommandHandler("setdetect", setdetect))
     app.add_handler(CommandHandler("setreplace", setreplace))
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(MessageHandler(filters.ALL, process_posts))
 
-    # Inicia el bot (modo polling)
     app.run_polling()
 
 if __name__ == "__main__":
