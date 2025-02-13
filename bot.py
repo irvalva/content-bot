@@ -6,124 +6,168 @@ from telegram.ext import (
     MessageHandler,
     filters,
     CallbackContext,
-    ConversationHandler,
 )
 
-# Configuración de logging para depuración (opcional)
+# Configuración de logging (opcional, para depuración)
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Estados de la conversación para configurar las palabras
-DETECT, REPLACE = range(2)
-
-# Diccionario para almacenar la configuración de cada usuario
+# Diccionario para almacenar la configuración de cada usuario.
+# Se espera que cada usuario configure dos parámetros:
+#   "detect": la palabra a detectar.
+#   "replace": la palabra de reemplazo.
 user_config = {}
 
-# --------- Comandos de Configuración ---------
+# ----- COMANDOS DE CONFIGURACIÓN -----
 
-# /start: Inicia la configuración preguntando la palabra a detectar y luego la de reemplazo
-async def start(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text("Det: ¿Palabra a detectar?")
-    return DETECT
+async def start(update: Update, context: CallbackContext) -> None:
+    """Muestra el menú de opciones."""
+    menu = (
+        "Opciones:\n"
+        "/setdetect <palabra> - Establecer palabra a detectar\n"
+        "/setreplace <palabra> - Establecer palabra de reemplazo\n"
+        "/reset - Reiniciar configuración\n"
+        "/detener - Detener\n\n"
+        "Envía un post (texto, foto, video o álbum) para procesarlo."
+    )
+    await update.message.reply_text(menu)
 
-async def set_detect(update: Update, context: CallbackContext) -> int:
+async def setdetect(update: Update, context: CallbackContext) -> None:
+    """Configura la palabra a detectar."""
     user_id = update.message.from_user.id
-    user_config[user_id] = {"detect": update.message.text}
-    await update.message.reply_text("Rep: ¿Palabra de reemplazo?")
-    return REPLACE
+    if not context.args:
+        await update.message.reply_text("Uso: /setdetect <palabra>")
+        return
+    detect_word = " ".join(context.args)
+    if user_id not in user_config:
+        user_config[user_id] = {}
+    user_config[user_id]["detect"] = detect_word
+    await update.message.reply_text(f"Palabra a detectar configurada: {detect_word}")
 
-async def set_replace(update: Update, context: CallbackContext) -> int:
+async def setreplace(update: Update, context: CallbackContext) -> None:
+    """Configura la palabra de reemplazo."""
     user_id = update.message.from_user.id
-    user_config[user_id]["replace"] = update.message.text
-    await update.message.reply_text("Listo. Configuración guardada.")
-    return ConversationHandler.END
+    if not context.args:
+        await update.message.reply_text("Uso: /setreplace <palabra>")
+        return
+    replace_word = " ".join(context.args)
+    if user_id not in user_config:
+        user_config[user_id] = {}
+    user_config[user_id]["replace"] = replace_word
+    await update.message.reply_text(f"Palabra de reemplazo configurada: {replace_word}")
 
-# /detener: Cancela el proceso de configuración en curso
-async def detener(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text("Proceso detenido.")
-    return ConversationHandler.END
-
-# /reset: Reinicia la configuración (borra las palabras definidas)
 async def reset(update: Update, context: CallbackContext) -> None:
+    """Reinicia la configuración del usuario."""
     user_id = update.message.from_user.id
     if user_id in user_config:
         del user_config[user_id]
-    await update.message.reply_text("Reset realizado. Usa /start para configurar.")
+    await update.message.reply_text("Configuración reiniciada.")
 
-# --------- Procesamiento de Mensajes ---------
+async def detener(update: Update, context: CallbackContext) -> None:
+    """Opción de detener (sólo informa)."""
+    await update.message.reply_text("Proceso detenido.")
 
-# Este handler procesa los mensajes enviados y realiza el reemplazo
+# ----- PROCESAMIENTO DE POSTS -----
+
 async def process_posts(update: Update, context: CallbackContext) -> None:
+    """
+    Procesa los mensajes recibidos (individuales o álbumes)
+    y realiza el reemplazo en el texto o caption, conservando las entidades de formato.
+    """
     user_id = update.message.from_user.id
-    # Si el usuario no ha configurado palabras, ignoramos el mensaje
+    # Si el usuario no configuró detect y replace, no hacemos nada.
     if user_id not in user_config:
         return
-
-    detect = user_config[user_id]["detect"]
-    replace = user_config[user_id]["replace"]
-
-    # Procesar álbum (media group)
-    if update.message.media_group_id:
-        media_group = update.message.media_group_id
-        media_list = context.bot_data.get(media_group, [])
-        media_list.append(update.message)
-        context.bot_data[media_group] = media_list
-
-        # Esperar a recibir todos los mensajes del álbum
-        if len(media_list) < update.message.media_group_size:
-            return
-
-        transformed_media = []
-        for media in media_list:
-            if media.caption is not None:
-                new_caption = media.caption.replace(detect, replace) if detect in media.caption else media.caption
-            else:
-                new_caption = None
-
-            if media.photo:
-                transformed_media.append(
-                    InputMediaPhoto(media.photo[-1].file_id, caption=new_caption)
-                )
-            elif media.video:
-                transformed_media.append(
-                    InputMediaVideo(media.video.file_id, caption=new_caption)
-                )
-        # Enviar el álbum transformado
-        await context.bot.send_media_group(chat_id=update.message.chat_id, media=transformed_media)
-        # Eliminar los mensajes originales
-        for media in media_list:
-            try:
-                await context.bot.delete_message(chat_id=media.chat_id, message_id=media.message_id)
-            except Exception:
-                pass
-        del context.bot_data[media_group]
+    detect = user_config[user_id].get("detect")
+    replace = user_config[user_id].get("replace")
+    if not detect or not replace:
         return
 
-    # Procesar mensajes individuales
-    original_text = update.message.text if update.message.text is not None else update.message.caption
-    if original_text is not None:
-        replaced_text = original_text.replace(detect, replace) if detect in original_text else original_text
-    else:
-        replaced_text = None
+    # ----- PROCESAMIENTO DE ÁLBUMES -----
+    if update.message.media_group_id:
+        group_id = update.message.media_group_id
+        group = context.bot_data.get(group_id, [])
+        group.append(update.message)
+        context.bot_data[group_id] = group
+        if len(group) < update.message.media_group_size:
+            return  # Esperamos a recibir todos los mensajes del álbum
 
-    if update.message.photo:
+        transformed_media = []
+        for msg in group:
+            if msg.caption:
+                # Se reemplaza el texto en el caption
+                new_caption = msg.caption.replace(detect, replace) if detect in msg.caption else msg.caption
+                # Se preservan las entidades de formato (aunque los offsets podrían variar si las longitudes cambian)
+                entities = msg.caption_entities
+            else:
+                new_caption = None
+                entities = None
+
+            if msg.photo:
+                transformed_media.append(
+                    InputMediaPhoto(msg.photo[-1].file_id, caption=new_caption, caption_entities=entities)
+                )
+            elif msg.video:
+                transformed_media.append(
+                    InputMediaVideo(msg.video.file_id, caption=new_caption, caption_entities=entities)
+                )
+            else:
+                # Se pueden agregar otros tipos de medios si es necesario.
+                pass
+
+        await context.bot.send_media_group(chat_id=update.message.chat_id, media=transformed_media)
+        # Se elimina cada mensaje original del álbum
+        for msg in group:
+            try:
+                await context.bot.delete_message(chat_id=msg.chat_id, message_id=msg.message_id)
+            except Exception:
+                pass
+        del context.bot_data[group_id]
+        return
+
+    # ----- PROCESAMIENTO DE MENSAJES INDIVIDUALES -----
+    # Si es un mensaje de texto
+    if update.message.text:
+        original_text = update.message.text
+        new_text = original_text.replace(detect, replace) if detect in original_text else original_text
+        # Se conserva el formato (entidades)
+        entities = update.message.entities
+        await update.message.reply_text(new_text, entities=entities)
+    # Si es una foto
+    elif update.message.photo:
+        caption = update.message.caption if update.message.caption else None
+        if caption:
+            new_caption = caption.replace(detect, replace) if detect in caption else caption
+            entities = update.message.caption_entities
+        else:
+            new_caption = None
+            entities = None
         await context.bot.send_photo(
             chat_id=update.message.chat_id,
             photo=update.message.photo[-1].file_id,
-            caption=replaced_text,
+            caption=new_caption,
+            caption_entities=entities,
         )
+    # Si es un video
     elif update.message.video:
+        caption = update.message.caption if update.message.caption else None
+        if caption:
+            new_caption = caption.replace(detect, replace) if detect in caption else caption
+            entities = update.message.caption_entities
+        else:
+            new_caption = None
+            entities = None
         await context.bot.send_video(
             chat_id=update.message.chat_id,
             video=update.message.video.file_id,
-            caption=replaced_text,
+            caption=new_caption,
+            caption_entities=entities,
         )
-    elif update.message.text:
-        await update.message.reply_text(replaced_text)
     else:
         try:
+            # Para otros tipos de mensajes, se reenvía sin modificación.
             await context.bot.copy_message(
                 chat_id=update.message.chat_id,
                 from_chat_id=update.message.chat_id,
@@ -132,40 +176,37 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
         except Exception:
             pass
 
-    # Eliminar el mensaje original
     try:
         await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
     except Exception:
         pass
 
-# --------- Configuración y Ejecución del Bot ---------
+# ----- CONFIGURACIÓN Y EJECUCIÓN DEL BOT -----
 
 def main():
     TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reemplaza con el token real de tu bot
-    application = Application.builder().token(TOKEN).build()
+    app = Application.builder().token(TOKEN).build()
 
-    # Configurar el flujo de conversación para /start
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            DETECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_detect)],
-            REPLACE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_replace)],
-        },
-        fallbacks=[CommandHandler("detener", detener)],
-    )
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("setdetect", setdetect))
+    app.add_handler(CommandHandler("setreplace", setreplace))
+    app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(CommandHandler("detener", detener))
+    app.add_handler(MessageHandler(filters.ALL, process_posts))
 
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("reset", reset))
-    application.add_handler(CommandHandler("detener", detener))
-    application.add_handler(MessageHandler(filters.ALL, process_posts))
+    # Opcional: Establecer el menú de comandos para que aparezcan en Telegram al escribir "/"
+    commands = [
+        BotCommand("start", "Iniciar"),
+        BotCommand("setdetect", "Config. detect"),
+        BotCommand("setreplace", "Config. reemplazo"),
+        BotCommand("reset", "Reiniciar"),
+        BotCommand("detener", "Detener"),
+    ]
+    async def set_bot_commands(app):
+        await app.bot.set_my_commands(commands)
+    app.job_queue.run_once(lambda ctx: set_bot_commands(app), when=0)
 
-    # Nota:
-    # Si deseas que las opciones aparezcan en el menú de Telegram (al presionar "/"),
-    # puedes configurarlas manualmente en BotFather o, alternativamente,
-    # instalar el JobQueue (pip install "python-telegram-bot[job-queue]")
-    # y agregar el código para set_my_commands. En esta versión se ha omitido para evitar errores.
-
-    application.run_polling()
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
