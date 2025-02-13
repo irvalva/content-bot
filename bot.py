@@ -177,7 +177,7 @@ def main():
     app.add_handler(CommandHandler("detener", detener))
     app.add_handler(MessageHandler(filters.ALL, process_posts))
 
-    # Establecer el menú de comandos antes de iniciar el polling
+    # Función asíncrona para establecer el menú de comandos
     async def set_commands():
         commands = [
             BotCommand("start", "Iniciar"),
@@ -188,10 +188,12 @@ def main():
         ]
         await app.bot.set_my_commands(commands)
 
-    # Ejecutamos la configuración de comandos y esperamos a que termine
+    # Ejecuta la configuración de comandos en un event loop separado
     asyncio.run(set_commands())
 
-    # Inicia el polling (este es un llamado bloqueante)
+    # Crea y establece un nuevo event loop para run_polling
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     app.run_polling()
 
 if __name__ == "__main__":
