@@ -8,14 +8,14 @@ from telegram.ext import (
     CallbackContext,
 )
 
-# Configuración de logging (opcional, para depuración)
+# Configuración del logging para depuración (opcional)
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 # Diccionario para almacenar la configuración de cada usuario.
-# Cada usuario debe configurar dos parámetros:
+# Cada usuario debe configurar:
 #   "detect": la palabra a detectar.
 #   "replace": la palabra de reemplazo.
 user_config = {}
@@ -70,7 +70,7 @@ async def detener(update: Update, context: CallbackContext) -> None:
 async def process_posts(update: Update, context: CallbackContext) -> None:
     """
     Procesa mensajes (individuales o álbumes) y realiza el reemplazo en el texto o caption.
-    Se preservan las entidades de formato (por ejemplo, negrita) en la medida de lo posible.
+    Se intenta conservar las entidades de formato (por ejemplo, negrita) en la medida de lo posible.
     """
     user_id = update.message.from_user.id
     if user_id not in user_config:
@@ -168,6 +168,7 @@ def main():
     TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reemplaza con el token real de tu bot
     app = Application.builder().token(TOKEN).build()
 
+    # Agregar handlers de comandos y mensajes
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("setdetect", setdetect))
     app.add_handler(CommandHandler("setreplace", setreplace))
@@ -175,7 +176,7 @@ def main():
     app.add_handler(CommandHandler("detener", detener))
     app.add_handler(MessageHandler(filters.ALL, process_posts))
 
-    # Establece el menú de comandos usando create_task (sin usar JobQueue)
+    # Función asíncrona para establecer el menú de comandos
     async def set_commands():
         commands = [
             BotCommand("start", "Iniciar"),
@@ -186,10 +187,8 @@ def main():
         ]
         await app.bot.set_my_commands(commands)
 
-    # Agenda la tarea para configurar el menú de comandos
-    app.create_task(set_commands())
-
-    app.run_polling()
+    # Usa el parámetro post_init para ejecutar la configuración del menú
+    app.run_polling(post_init=set_commands)
 
 if __name__ == "__main__":
     main()
