@@ -9,19 +9,21 @@ from telegram.ext import (
     ConversationHandler,
 )
 
-# Habilitamos logging para ver mensajes de depuración (opcional)
+# Configuración de logging para depuración (opcional)
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Estados de la conversación
+# Estados de la conversación para configurar las palabras
 DETECT, REPLACE = range(2)
 
 # Diccionario para almacenar la configuración de cada usuario
 user_config = {}
 
-# ---------- CONVERSACIÓN / START ----------
+# --------- Comandos de Configuración ---------
+
+# /start: Inicia la configuración preguntando la palabra a detectar y luego la de reemplazo
 async def start(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Det: ¿Palabra a detectar?")
     return DETECT
@@ -38,22 +40,24 @@ async def set_replace(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Listo. Configuración guardada.")
     return ConversationHandler.END
 
-# Comando para detener/cancelar el proceso en curso
+# /detener: Cancela el proceso de configuración en curso
 async def detener(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Proceso detenido.")
     return ConversationHandler.END
 
-# ---------- COMANDO / RESET ----------
+# /reset: Reinicia la configuración (borra las palabras definidas)
 async def reset(update: Update, context: CallbackContext) -> None:
     user_id = update.message.from_user.id
     if user_id in user_config:
         del user_config[user_id]
     await update.message.reply_text("Reset realizado. Usa /start para configurar.")
 
-# ---------- PROCESAMIENTO DE MENSAJES ----------
+# --------- Procesamiento de Mensajes ---------
+
+# Este handler procesa los mensajes enviados y realiza el reemplazo
 async def process_posts(update: Update, context: CallbackContext) -> None:
     user_id = update.message.from_user.id
-    # Si el usuario no tiene configuración, ignorar
+    # Si el usuario no ha configurado palabras, ignoramos el mensaje
     if user_id not in user_config:
         return
 
@@ -67,7 +71,7 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
         media_list.append(update.message)
         context.bot_data[media_group] = media_list
 
-        # Esperar hasta recibir todos los mensajes del álbum
+        # Esperar a recibir todos los mensajes del álbum
         if len(media_list) < update.message.media_group_size:
             return
 
@@ -86,9 +90,9 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
                 transformed_media.append(
                     InputMediaVideo(media.video.file_id, caption=new_caption)
                 )
-        # Enviar el álbum transformado (manteniendo el orden)
+        # Enviar el álbum transformado
         await context.bot.send_media_group(chat_id=update.message.chat_id, media=transformed_media)
-        # Eliminar cada uno de los mensajes originales
+        # Eliminar los mensajes originales
         for media in media_list:
             try:
                 await context.bot.delete_message(chat_id=media.chat_id, message_id=media.message_id)
@@ -128,16 +132,19 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
         except Exception:
             pass
 
+    # Eliminar el mensaje original
     try:
         await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
     except Exception:
         pass
 
-# ---------- CONFIGURACIÓN Y EJECUCIÓN ----------
+# --------- Configuración y Ejecución del Bot ---------
+
 def main():
-    TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g" # Reemplaza con el token de tu bot
+    TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reemplaza con el token real de tu bot
     application = Application.builder().token(TOKEN).build()
 
+    # Configurar el flujo de conversación para /start
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -152,17 +159,11 @@ def main():
     application.add_handler(CommandHandler("detener", detener))
     application.add_handler(MessageHandler(filters.ALL, process_posts))
 
-    # Establece el menú de comandos (texto corto y directo)
-    commands = [
-        BotCommand("start", "Iniciar"),
-        BotCommand("reset", "Reset"),
-        BotCommand("detener", "Detener"),
-    ]
-    async def set_commands(app):
-        await app.bot.set_my_commands(commands)
-
-    # Programa la asignación de comandos para que se ejecute al iniciar
-    application.job_queue.run_once(lambda context: set_commands(application), when=0)
+    # Nota:
+    # Si deseas que las opciones aparezcan en el menú de Telegram (al presionar "/"),
+    # puedes configurarlas manualmente en BotFather o, alternativamente,
+    # instalar el JobQueue (pip install "python-telegram-bot[job-queue]")
+    # y agregar el código para set_my_commands. En esta versión se ha omitido para evitar errores.
 
     application.run_polling()
 
