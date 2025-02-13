@@ -11,7 +11,8 @@ from telegram.ext import (
 
 # Configuración de logging (opcional)
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
@@ -101,11 +102,15 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
 
             if msg.photo:
                 transformed_media.append(
-                    InputMediaPhoto(msg.photo[-1].file_id, caption=new_caption, caption_entities=entities)
+                    InputMediaPhoto(
+                        msg.photo[-1].file_id, caption=new_caption, caption_entities=entities
+                    )
                 )
             elif msg.video:
                 transformed_media.append(
-                    InputMediaVideo(msg.video.file_id, caption=new_caption, caption_entities=entities)
+                    InputMediaVideo(
+                        msg.video.file_id, caption=new_caption, caption_entities=entities
+                    )
                 )
         await context.bot.send_media_group(chat_id=update.message.chat_id, media=transformed_media)
         # Eliminar los mensajes originales del álbum
@@ -165,7 +170,7 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
 
 # ----- CONFIGURACIÓN Y EJECUCIÓN DEL BOT -----
 
-def main():
+async def main() -> None:
     TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reemplaza con el token real de tu bot
     app = Application.builder().token(TOKEN).build()
 
@@ -177,24 +182,22 @@ def main():
     app.add_handler(CommandHandler("detener", detener))
     app.add_handler(MessageHandler(filters.ALL, process_posts))
 
-    # Función asíncrona para establecer el menú de comandos
-    async def set_commands():
-        commands = [
-            BotCommand("start", "Iniciar"),
-            BotCommand("setdetect", "Config. detect"),
-            BotCommand("setreplace", "Config. reemplazo"),
-            BotCommand("reset", "Reiniciar"),
-            BotCommand("detener", "Detener"),
-        ]
-        await app.bot.set_my_commands(commands)
+    # Establece el menú de comandos
+    commands = [
+        BotCommand("start", "Iniciar"),
+        BotCommand("setdetect", "Config. detect"),
+        BotCommand("setreplace", "Config. reemplazo"),
+        BotCommand("reset", "Reiniciar"),
+        BotCommand("detener", "Detener"),
+    ]
+    await app.bot.set_my_commands(commands)
 
-    # Ejecuta la configuración de comandos en un event loop separado
-    asyncio.run(set_commands())
-
-    # Crea y establece un nuevo event loop para run_polling
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    app.run_polling()
+    # Inicializa y arranca la aplicación asíncronamente
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    # Permite que el bot se mantenga en ejecución hasta que se detenga manualmente
+    await app.updater.idle()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
