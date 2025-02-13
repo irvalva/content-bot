@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from telegram import Update, InputMediaPhoto, InputMediaVideo, BotCommand
 from telegram.ext import (
     Application,
@@ -8,7 +9,7 @@ from telegram.ext import (
     CallbackContext,
 )
 
-# Configuración del logging para depuración (opcional)
+# Configuración de logging (opcional)
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -176,7 +177,7 @@ def main():
     app.add_handler(CommandHandler("detener", detener))
     app.add_handler(MessageHandler(filters.ALL, process_posts))
 
-    # Función asíncrona para establecer el menú de comandos
+    # Establecer el menú de comandos antes de iniciar el polling
     async def set_commands():
         commands = [
             BotCommand("start", "Iniciar"),
@@ -187,8 +188,11 @@ def main():
         ]
         await app.bot.set_my_commands(commands)
 
-    # Usa el parámetro post_init para ejecutar la configuración del menú
-    app.run_polling(post_init=set_commands)
+    # Ejecutamos la configuración de comandos y esperamos a que termine
+    asyncio.run(set_commands())
+
+    # Inicia el polling (este es un llamado bloqueante)
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
