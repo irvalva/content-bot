@@ -1,23 +1,16 @@
 import logging
 import asyncio
-from telegram import Update, InputMediaPhoto, InputMediaVideo, BotCommand
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    CallbackContext,
-)
+from telegram import Update, BotCommand, InputMediaPhoto, InputMediaVideo
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
 
-# Configuración de logging (opcional)
+# Configuración del logging (opcional)
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 # Diccionario para almacenar la configuración de cada usuario.
-# Cada usuario debe configurar:
+# Cada usuario debe definir:
 #   "detect": la palabra a detectar.
 #   "replace": la palabra de reemplazo.
 user_config = {}
@@ -57,7 +50,7 @@ async def setreplace(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(f"Palabra de reemplazo configurada: {replace}")
 
 async def reset(update: Update, context: CallbackContext) -> None:
-    """Reinicia la configuración del usuario."""
+    """Reinicia (elimina) la configuración del usuario."""
     user_id = update.message.from_user.id
     if user_id in user_config:
         del user_config[user_id]
@@ -72,7 +65,7 @@ async def detener(update: Update, context: CallbackContext) -> None:
 async def process_posts(update: Update, context: CallbackContext) -> None:
     """
     Procesa mensajes (individuales o álbumes) y realiza el reemplazo en el texto o caption.
-    Se intenta conservar las entidades de formato (por ejemplo, negrita) en la medida de lo posible.
+    Se intenta conservar, en lo posible, el formato (por ejemplo, negrita mediante entities).
     """
     user_id = update.message.from_user.id
     if user_id not in user_config:
@@ -83,7 +76,7 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
     if not detect or not replace:
         return
 
-    # ----- PROCESAMIENTO DE ÁLBUMES -----
+    # ----- Procesamiento de álbumes (media_group) -----
     if update.message.media_group_id:
         group_id = update.message.media_group_id
         group = context.bot_data.setdefault(group_id, [])
@@ -92,7 +85,7 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
         if len(group) < update.message.media_group_size:
             return
 
-        transformed_media = []
+        media = []
         for msg in group:
             if msg.caption:
                 new_caption = msg.caption.replace(detect, replace) if detect in msg.caption else msg.caption
@@ -101,19 +94,19 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
                 new_caption, entities = None, None
 
             if msg.photo:
-                transformed_media.append(
+                media.append(
                     InputMediaPhoto(
                         msg.photo[-1].file_id, caption=new_caption, caption_entities=entities
                     )
                 )
             elif msg.video:
-                transformed_media.append(
+                media.append(
                     InputMediaVideo(
                         msg.video.file_id, caption=new_caption, caption_entities=entities
                     )
                 )
-        await context.bot.send_media_group(chat_id=update.message.chat_id, media=transformed_media)
-        # Eliminar los mensajes originales del álbum
+        await context.bot.send_media_group(chat_id=update.message.chat_id, media=media)
+        # Eliminar mensajes originales del álbum
         for msg in group:
             try:
                 await context.bot.delete_message(chat_id=msg.chat_id, message_id=msg.message_id)
@@ -122,36 +115,28 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
         del context.bot_data[group_id]
         return
 
-    # ----- PROCESAMIENTO DE MENSAJES INDIVIDUALES -----
+    # ----- Procesamiento de mensajes individuales -----
     if update.message.text:
         original = update.message.text
         new_text = original.replace(detect, replace) if detect in original else original
         await update.message.reply_text(new_text, entities=update.message.entities)
     elif update.message.photo:
-        caption = update.message.caption if update.message.caption else None
-        if caption:
-            new_caption = caption.replace(detect, replace) if detect in caption else caption
-            entities = update.message.caption_entities
-        else:
-            new_caption, entities = None, None
+        caption = update.message.caption or ""
+        new_caption = caption.replace(detect, replace) if detect in caption else caption
         await context.bot.send_photo(
             chat_id=update.message.chat_id,
             photo=update.message.photo[-1].file_id,
             caption=new_caption,
-            caption_entities=entities,
+            caption_entities=update.message.caption_entities,
         )
     elif update.message.video:
-        caption = update.message.caption if update.message.caption else None
-        if caption:
-            new_caption = caption.replace(detect, replace) if detect in caption else caption
-            entities = update.message.caption_entities
-        else:
-            new_caption, entities = None, None
+        caption = update.message.caption or ""
+        new_caption = caption.replace(detect, replace) if detect in caption else caption
         await context.bot.send_video(
             chat_id=update.message.chat_id,
             video=update.message.video.file_id,
             caption=new_caption,
-            caption_entities=entities,
+            caption_entities=update.message.caption_entities,
         )
     else:
         try:
@@ -170,7 +155,7 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
 
 # ----- CONFIGURACIÓN Y EJECUCIÓN DEL BOT -----
 
-async def main() -> None:
+def main():
     TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reemplaza con el token real de tu bot
     app = Application.builder().token(TOKEN).build()
 
@@ -182,7 +167,7 @@ async def main() -> None:
     app.add_handler(CommandHandler("detener", detener))
     app.add_handler(MessageHandler(filters.ALL, process_posts))
 
-    # Establece el menú de comandos
+    # Establecer el menú de comandos para Telegram
     commands = [
         BotCommand("start", "Iniciar"),
         BotCommand("setdetect", "Config. detect"),
@@ -190,14 +175,13 @@ async def main() -> None:
         BotCommand("reset", "Reiniciar"),
         BotCommand("detener", "Detener"),
     ]
-    await app.bot.set_my_commands(commands)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(app.bot.set_my_commands(commands))
+    loop.close()
 
-    # Inicializa y arranca la aplicación asíncronamente
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    # Permite que el bot se mantenga en ejecución hasta que se detenga manualmente
-    await app.updater.idle()
+    # Inicia el polling (bloqueante)
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
