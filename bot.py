@@ -1,4 +1,5 @@
-from telegram import Update, InputMediaPhoto, InputMediaVideo
+import logging
+from telegram import Update, InputMediaPhoto, InputMediaVideo, BotCommand
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -8,46 +9,58 @@ from telegram.ext import (
     ConversationHandler,
 )
 
-# Diccionario para almacenar configuraciones de reemplazo por usuario
-user_data = {}
+# Habilitamos logging para ver mensajes de depuración (opcional)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# Estados para el flujo de conversación
-TEXT_TO_REPLACE, NEW_TEXT = range(2)
+# Estados de la conversación
+DETECT, REPLACE = range(2)
 
-# Comando /start para configurar el reemplazador
+# Diccionario para almacenar la configuración de cada usuario
+user_config = {}
+
+# ---------- CONVERSACIÓN / START ----------
 async def start(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text("¡Hola! ¿Qué texto deseas reemplazar?")
-    return TEXT_TO_REPLACE
+    await update.message.reply_text("Det: ¿Palabra a detectar?")
+    return DETECT
 
-
-# Capturar texto a reemplazar
-async def set_text_to_replace(update: Update, context: CallbackContext) -> int:
+async def set_detect(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
-    user_data[user_id] = {"text_to_replace": update.message.text}
-    await update.message.reply_text(
-        f"Perfecto. ¿Por qué texto deseas reemplazar '{update.message.text}'?"
-    )
-    return NEW_TEXT
+    user_config[user_id] = {"detect": update.message.text}
+    await update.message.reply_text("Rep: ¿Palabra de reemplazo?")
+    return REPLACE
 
-
-# Capturar nuevo texto para reemplazar
-async def set_new_text(update: Update, context: CallbackContext) -> int:
+async def set_replace(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
-    user_data[user_id]["new_text"] = update.message.text
-    await update.message.reply_text("Listo. Reenvíame mensajes para procesarlos.")
+    user_config[user_id]["replace"] = update.message.text
+    await update.message.reply_text("Listo. Configuración guardada.")
     return ConversationHandler.END
 
+# Comando para detener/cancelar el proceso en curso
+async def detener(update: Update, context: CallbackContext) -> int:
+    await update.message.reply_text("Proceso detenido.")
+    return ConversationHandler.END
 
-# Procesar mensajes (tanto individuales como álbumes)
+# ---------- COMANDO / RESET ----------
+async def reset(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.from_user.id
+    if user_id in user_config:
+        del user_config[user_id]
+    await update.message.reply_text("Reset realizado. Usa /start para configurar.")
+
+# ---------- PROCESAMIENTO DE MENSAJES ----------
 async def process_posts(update: Update, context: CallbackContext) -> None:
     user_id = update.message.from_user.id
-    if user_id not in user_data:
-        return  # Ignorar si no hay configuración de reemplazo
+    # Si el usuario no tiene configuración, ignorar
+    if user_id not in user_config:
+        return
 
-    text_to_replace = user_data[user_id]["text_to_replace"]
-    new_text = user_data[user_id]["new_text"]
+    detect = user_config[user_id]["detect"]
+    replace = user_config[user_id]["replace"]
 
-    # Procesamiento para álbum (media group)
+    # Procesar álbum (media group)
     if update.message.media_group_id:
         media_group = update.message.media_group_id
         media_list = context.bot_data.get(media_group, [])
@@ -60,12 +73,8 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
 
         transformed_media = []
         for media in media_list:
-            # Si existe caption, aplicar (o no) la sustitución
             if media.caption is not None:
-                if text_to_replace in media.caption:
-                    new_caption = media.caption.replace(text_to_replace, new_text)
-                else:
-                    new_caption = media.caption
+                new_caption = media.caption.replace(detect, replace) if detect in media.caption else media.caption
             else:
                 new_caption = None
 
@@ -77,43 +86,24 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
                 transformed_media.append(
                     InputMediaVideo(media.video.file_id, caption=new_caption)
                 )
-            else:
-                # Aquí podrías agregar soporte para otros tipos de medios si lo deseas.
-                pass
-
         # Enviar el álbum transformado (manteniendo el orden)
-        await context.bot.send_media_group(
-            chat_id=update.message.chat_id, media=transformed_media
-        )
-
-        # Eliminar cada uno de los mensajes originales del álbum
+        await context.bot.send_media_group(chat_id=update.message.chat_id, media=transformed_media)
+        # Eliminar cada uno de los mensajes originales
         for media in media_list:
             try:
-                await context.bot.delete_message(
-                    chat_id=media.chat_id, message_id=media.message_id
-                )
+                await context.bot.delete_message(chat_id=media.chat_id, message_id=media.message_id)
             except Exception:
                 pass
-
-        # Limpiar la entrada en bot_data
         del context.bot_data[media_group]
         return
 
-    # Procesamiento para mensajes individuales
-    # Se extrae el contenido (texto o caption) y se determina el nuevo texto a usar
-    original_text = (
-        update.message.text
-        if update.message.text is not None
-        else update.message.caption
-    )
+    # Procesar mensajes individuales
+    original_text = update.message.text if update.message.text is not None else update.message.caption
     if original_text is not None:
-        if text_to_replace in original_text:
-            replaced_text = original_text.replace(text_to_replace, new_text)
-        else:
-            replaced_text = original_text
+        replaced_text = original_text.replace(detect, replace) if detect in original_text else original_text
     else:
         replaced_text = None
-# Procesar según el tipo de mensaje
+
     if update.message.photo:
         await context.bot.send_photo(
             chat_id=update.message.chat_id,
@@ -129,7 +119,6 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
     elif update.message.text:
         await update.message.reply_text(replaced_text)
     else:
-        # Para otros tipos de mensaje, se usa copy_message para "repostear" sin cambios.
         try:
             await context.bot.copy_message(
                 chat_id=update.message.chat_id,
@@ -139,36 +128,43 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
         except Exception:
             pass
 
-    # Eliminar el mensaje original (ya se procesó y se reenvió)
     try:
-        await context.bot.delete_message(
-            chat_id=update.message.chat_id, message_id=update.message.message_id
-        )
+        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
     except Exception:
         pass
 
-
-# Configuración y ejecución del bot
+# ---------- CONFIGURACIÓN Y EJECUCIÓN ----------
 def main():
-    TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"
+    TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g" # Reemplaza con el token de tu bot
     application = Application.builder().token(TOKEN).build()
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            TEXT_TO_REPLACE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, set_text_to_replace)
-            ],
-            NEW_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_text)],
+            DETECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_detect)],
+            REPLACE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_replace)],
         },
-        fallbacks=[],
+        fallbacks=[CommandHandler("detener", detener)],
     )
 
     application.add_handler(conv_handler)
+    application.add_handler(CommandHandler("reset", reset))
+    application.add_handler(CommandHandler("detener", detener))
     application.add_handler(MessageHandler(filters.ALL, process_posts))
+
+    # Establece el menú de comandos (texto corto y directo)
+    commands = [
+        BotCommand("start", "Iniciar"),
+        BotCommand("reset", "Reset"),
+        BotCommand("detener", "Detener"),
+    ]
+    async def set_commands(app):
+        await app.bot.set_my_commands(commands)
+
+    # Programa la asignación de comandos para que se ejecute al iniciar
+    application.job_queue.run_once(lambda context: set_commands(application), when=0)
 
     application.run_polling()
 
-
-if name == "main":
+if __name__ == "__main__":
     main()
