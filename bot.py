@@ -1,7 +1,19 @@
 import logging
+import re
 import asyncio
-from telegram import Update, InputMediaPhoto, InputMediaVideo
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
+from telegram import (
+    Update,
+    InputMediaPhoto,
+    InputMediaVideo,
+    MessageEntity
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    CallbackContext
+)
 
 # Configuración del logging (opcional)
 logging.basicConfig(
@@ -10,10 +22,40 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Diccionario para almacenar la configuración de cada usuario.
-# Cada usuario define:
+# Cada usuario debe definir:
 #   "detect": la palabra a detectar.
 #   "replace": la palabra de reemplazo.
 user_config = {}
+
+def adjust_entities(original: str, new_text: str, entities, detect: str, replace: str):
+    """
+    Ajusta los offsets y longitudes de las entidades de formato en función
+    de las diferencias de longitud entre 'detect' y 'replace'.
+    """
+    diff = len(replace) - len(detect)
+    new_entities = []
+    # Se asume que entities es una lista de MessageEntity
+    for ent in entities:
+        new_offset = ent.offset
+        new_length = ent.length
+        pos = 0
+        # Para cada ocurrencia de 'detect' en el texto original,
+        # si ocurre antes o dentro del rango de la entidad, ajustar offset/length.
+        while True:
+            idx = original.find(detect, pos)
+            if idx == -1:
+                break
+            if idx < ent.offset:
+                new_offset += diff
+            elif idx >= ent.offset and idx < ent.offset + ent.length:
+                new_length += diff
+            pos = idx + len(detect)
+        new_ent_dict = ent.to_dict()
+        new_ent_dict["offset"] = new_offset
+        new_ent_dict["length"] = new_length
+        new_ent = MessageEntity.de_json(new_ent_dict, None)
+        new_entities.append(new_ent)
+    return new_entities
 
 # Comando: /setdetect <palabra>
 async def setdetect(update: Update, context: CallbackContext) -> None:
@@ -48,16 +90,16 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
     if not detect or not replace:
         return
 
-    # Manejo de álbumes: si el mensaje tiene media_group_id, lo acumulamos
+    # Procesamiento de álbumes (mensajes con media_group_id)
     if update.message.media_group_id:
         group_id = update.message.media_group_id
         group = context.bot_data.setdefault(group_id, [])
         group.append(update.message)
-        # Usamos un diccionario interno para programar una tarea única por grupo
+        # Programamos una tarea única para procesar el álbum
         if "scheduled_album_tasks" not in context.bot_data:
             context.bot_data["scheduled_album_tasks"] = {}
         if group_id in context.bot_data["scheduled_album_tasks"]:
-            return  # Ya se programó la tarea para este álbum
+            return  # La tarea ya está programada
 
         async def process_album():
             await asyncio.sleep(1)  # Espera 1 segundo para recibir todas las partes del álbum
@@ -66,13 +108,19 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
             media_list = []
             for msg in album:
                 if msg.caption:
+                    # Reemplazar y actualizar entidades si existen
                     new_caption = msg.caption.replace(detect, replace) if detect in msg.caption else msg.caption
+                    if msg.caption_entities:
+                        new_entities = adjust_entities(msg.caption, new_caption, msg.caption_entities, detect, replace)
+                    else:
+                        new_entities = None
                 else:
-                    new_caption = None
+                    new_caption, new_entities = None, None
+
                 if msg.photo:
-                    media_list.append(InputMediaPhoto(msg.photo[-1].file_id, caption=new_caption))
+                    media_list.append(InputMediaPhoto(msg.photo[-1].file_id, caption=new_caption, caption_entities=new_entities))
                 elif msg.video:
-                    media_list.append(InputMediaVideo(msg.video.file_id, caption=new_caption))
+                    media_list.append(InputMediaVideo(msg.video.file_id, caption=new_caption, caption_entities=new_entities))
             if media_list:
                 await context.bot.send_media_group(chat_id=update.message.chat_id, media=media_list)
             for msg in album:
@@ -85,27 +133,40 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
         context.bot_data["scheduled_album_tasks"][group_id] = task
         return
 
-    # Procesamiento de mensajes individuales
+    # Procesamiento de mensajes individuales:
     if update.message.text:
         new_text = update.message.text.replace(detect, replace) if detect in update.message.text else update.message.text
-        await update.message.reply_text(new_text, entities=update.message.entities)
+        # Si existen entidades de formato, se ajustan
+        if update.message.entities:
+            new_entities = adjust_entities(update.message.text, new_text, update.message.entities, detect, replace)
+        else:
+            new_entities = None
+        await update.message.reply_text(new_text, entities=new_entities)
     elif update.message.photo:
         caption = update.message.caption or ""
         new_caption = caption.replace(detect, replace) if detect in caption else caption
+        if update.message.caption_entities:
+            new_entities = adjust_entities(caption, new_caption, update.message.caption_entities, detect, replace)
+        else:
+            new_entities = None
         await context.bot.send_photo(
             chat_id=update.message.chat_id,
             photo=update.message.photo[-1].file_id,
             caption=new_caption,
-            caption_entities=update.message.caption_entities,
+            caption_entities=new_entities,
         )
     elif update.message.video:
         caption = update.message.caption or ""
         new_caption = caption.replace(detect, replace) if detect in caption else caption
+        if update.message.caption_entities:
+            new_entities = adjust_entities(caption, new_caption, update.message.caption_entities, detect, replace)
+        else:
+            new_entities = None
         await context.bot.send_video(
             chat_id=update.message.chat_id,
             video=update.message.video.file_id,
             caption=new_caption,
-            caption_entities=update.message.caption_entities,
+            caption_entities=new_entities,
         )
     else:
         try:
@@ -126,12 +187,13 @@ def main():
     TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reemplaza con el token real de tu bot
     app = Application.builder().token(TOKEN).build()
 
-    # Registrar comandos
+    # Registrar los handlers de comandos y mensajes
     app.add_handler(CommandHandler("setdetect", setdetect))
     app.add_handler(CommandHandler("setreplace", setreplace))
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(MessageHandler(filters.ALL, process_posts))
 
+    # Inicia el bot en modo polling (este método se queda ejecutándose indefinidamente)
     app.run_polling()
 
 if __name__ == "__main__":
