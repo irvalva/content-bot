@@ -26,34 +26,31 @@ from telegram.ext import (
 # Configuración del Bot Maestro
 #############################################
 
-MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # <-- Reemplaza con el token real
+MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reemplaza con tu token real
 
 #############################################
-# Funciones auxiliares para convertir entidades a HTML
+# Funciones auxiliares para convertir a HTML
 #############################################
 
 def convert_to_html(text: str, entities) -> str:
     """
-    Reconstruye el texto aplicando las entidades de formato (por ejemplo, bold) a HTML.
-    Solo procesa entidades de tipo "bold" (para preservar negritas).
-    Asume que las entidades vienen en orden ascendente según offset.
+    Reconstruye el texto a HTML aplicando las entidades de formato (solo se procesan
+    las de tipo "bold"). Si no hay entidades, retorna el texto sin cambios.
     """
     result = ""
     last_index = 0
     for entity in sorted(entities, key=lambda e: e.offset):
         result += text[last_index:entity.offset]
-        entity_text = text[entity.offset: entity.offset + entity.length]
+        segment = text[entity.offset: entity.offset + entity.length]
         if entity.type == "bold":
-            result += "<b>" + entity_text + "</b>"
+            result += "<b>" + segment + "</b>"
         else:
-            result += entity_text
+            result += segment
         last_index = entity.offset + entity.length
     result += text[last_index:]
     return result
 
 def get_message_html(message: Update.message.__class__) -> str:
-    """Intenta obtener el mensaje en HTML a partir de las entidades.
-    Si no hay entidades, retorna el texto sin formatear."""
     if message.entities:
         return convert_to_html(message.text, message.entities)
     try:
@@ -75,15 +72,21 @@ def get_caption_html(message: Update.message.__class__) -> str:
 
 def replace_text(html_text: str, detect_word: str, replace_word: str) -> str:
     """
-    Procesa el contenido HTML para reemplazar todas las ocurrencias de detect_word por replace_word.
-    Si la coincidencia se encuentra dentro de una etiqueta <b>, se reemplaza esa parte quitándole la negrita,
-    mientras se conserva el resto del contenido en negrita. Fuera de <b> se hace una sustitución simple.
-    Se usan lookarounds para que la coincidencia funcione correctamente, incluso si detect_word empieza con caracteres especiales.
+    Procesa el contenido HTML para reemplazar todas las ocurrencias de detect_word
+    por replace_word.
+
+    Si detect_word aparece dentro de una etiqueta <b>, se quita la negrita en la parte
+    reemplazada y se conserva el resto del contenido en negrita; fuera de <b> se hace
+    una sustitución simple.
+
+    Se usa un patrón basado en límites definidos por [A-Za-z0-9] para que coincida
+    correctamente incluso si detect_word empieza con caracteres especiales (por ejemplo, "@").
     """
     soup = BeautifulSoup(html_text, 'html.parser')
-    regex = re.compile(r'(?<!\w)' + re.escape(detect_word) + r'(?!\w)', re.IGNORECASE)
+    # Usa límites basados en caracteres alfanuméricos
+    regex = re.compile(r'(?<![A-Za-z0-9])' + re.escape(detect_word) + r'(?![A-Za-z0-9])', re.IGNORECASE)
 
-    # Procesar nodos dentro de <b>
+    # Procesar nodos dentro de etiquetas <b>
     for bold_tag in soup.find_all("b"):
         if detect_word.lower() in bold_tag.get_text().lower():
             content = bold_tag.decode_contents(formatter="html")
@@ -93,11 +96,13 @@ def replace_text(html_text: str, detect_word: str, replace_word: str) -> str:
                 continue
             new_fragments = []
             for i, part in enumerate(parts):
+                # Si hay contenido, se envuelve en <b>
                 if part:
                     new_b = soup.new_tag("b")
                     new_b.append(NavigableString(part))
                     new_fragments.append(new_b)
                 if i < len(matches):
+                    # Inserta la palabra reemplazada como texto plano
                     new_fragments.append(NavigableString(replace_word))
             for frag in new_fragments:
                 bold_tag.insert_before(frag)
@@ -170,6 +175,7 @@ async def rep_detener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def rep_process_individual_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     configs = context.bot_data.get("configurations", {})
+    # Si no hay configuración activa, se reenvía el post original (con formato)
     if chat_id not in configs or not configs[chat_id].get("active", False):
         if update.message.text:
             original_html = get_message_html(update.message)
@@ -205,11 +211,7 @@ async def rep_process_individual_message(update: Update, context: ContextTypes.D
                     parse_mode="HTML"
                 )
         else:
-            await context.bot.copy_message(
-                chat_id=chat_id,
-                from_chat_id=chat_id,
-                message_id=update.message.message_id
-            )
+            await context.bot.copy_message(chat_id=chat_id, from_chat_id=chat_id, message_id=update.message.message_id)
         try:
             await update.message.delete()
         except Exception as e:
@@ -265,11 +267,7 @@ async def rep_process_individual_message(update: Update, context: ContextTypes.D
         except Exception as e:
             logging.error("Error al borrar mensaje: %s", e)
     else:
-        await context.bot.copy_message(
-            chat_id=chat_id,
-            from_chat_id=chat_id,
-            message_id=update.message.message_id
-        )
+        await context.bot.copy_message(chat_id=chat_id, from_chat_id=chat_id, message_id=update.message.message_id)
         try:
             await update.message.delete()
         except Exception as e:
@@ -282,7 +280,7 @@ async def rep_process_media_group(context: CallbackContext) -> None:
     messages = media_groups.pop(mg_id, [])
     if not messages:
         return
-    # Ordenar por fecha y, en segundo orden, por message_id para preservar el orden original
+    # Ordena por fecha y message_id para preservar el orden original
     messages.sort(key=lambda m: (m.date, m.message_id))
     chat_id = messages[0].chat.id
     configs = context.bot_data.get("configurations", {})
@@ -402,6 +400,7 @@ async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 def run_polling_in_thread(app: Application, loop: asyncio.AbstractEventLoop):
     asyncio.set_event_loop(loop)
+    # Parcheamos add_signal_handler para evitar errores en threads secundarios
     loop.add_signal_handler = lambda sig, callback, *args, **kwargs: None
     if app.job_queue is None:
         jq = JobQueue()
