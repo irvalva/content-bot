@@ -201,7 +201,6 @@ def setup_replacement_bot(app: Application) -> None:
     """
     Agrega los handlers correspondientes a un bot de reemplazo.
     """
-    # ConversationHandler para configurar las palabras con /iniciar
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("iniciar", rep_iniciar)],
         states={
@@ -232,16 +231,19 @@ async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("Envía el token del bot que deseas agregar:")
     return ADD_BOT_TOKEN
 
+# Función para iniciar el bot de reemplazo usando sus métodos asíncronos
+async def start_replacement_bot(rep_app: Application):
+    await rep_app.initialize()
+    await rep_app.start_polling()
+
 async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     token = update.message.text.strip()
     try:
-        # Se crea una nueva Application para el bot de reemplazo usando el token proporcionado
         rep_app = Application.builder().token(token).build()
         setup_replacement_bot(rep_app)
-        # Almacena la instancia del bot agregado (opcional: para control o registro)
         context.bot_data.setdefault("additional_bots", {})[token] = rep_app
-        # Inicia el bot de reemplazo en segundo plano sin cerrar el event loop
-        asyncio.create_task(rep_app.run_polling(close_loop=False))
+        # En lugar de run_polling(), lanzamos la función asíncrona para iniciar el bot
+        asyncio.create_task(start_replacement_bot(rep_app))
         await update.message.reply_text("Bot de reemplazo agregado exitosamente.")
     except Exception as e:
         await update.message.reply_text(f"Error al agregar el bot: {e}")
@@ -252,17 +254,12 @@ async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFA
 #############################################
 
 def main() -> None:
-    # Configuración básica de logging
     logging.basicConfig(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
     )
-
     master_app = Application.builder().token(MASTER_TELEGRAM_TOKEN).build()
 
-    # Handler para /start del bot maestro
     master_app.add_handler(CommandHandler("start", master_start))
-
-    # ConversationHandler para agregar bots (comando /addbot)
     conv_master = ConversationHandler(
         entry_points=[CommandHandler("addbot", master_addbot_start)],
         states={
@@ -271,8 +268,6 @@ def main() -> None:
         fallbacks=[],
     )
     master_app.add_handler(conv_master)
-
-    # Inicia el bot maestro en modo polling
     master_app.run_polling()
 
 if __name__ == "__main__":
