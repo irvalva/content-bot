@@ -2,7 +2,7 @@ import logging
 import re
 import threading
 import asyncio
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 from telegram import (
     Update,
     InputMediaPhoto,
@@ -24,35 +24,67 @@ from telegram.ext import (
 # Configuración del Bot Maestro
 #############################################
 
-MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reemplaza con el token real
+MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # <-- Reemplaza con el token real
 
 #############################################
 # Funciones compartidas para Bots de Reemplazo
 #############################################
 
-# Estados para la conversación
+# Estados para la conversación de configuración en el bot de reemplazo
 DETECT_WORD, REPLACE_WORD = range(2)
 
 def replace_text(text: str, detect_word: str, replace_word: str) -> str:
     """
-    Procesa el contenido (HTML o plain text) para reemplazar todas las ocurrencias de detect_word
-    por replace_word, quitándole el formato (por ejemplo, negrita) a la palabra reemplazada.
+    Procesa el contenido HTML o texto plano para reemplazar todas las ocurrencias
+    de detect_word por replace_word.
     
-    Se utiliza BeautifulSoup para preservar el resto del formato HTML y se usa lookaround
-    para que coincida correctamente incluso si la palabra inicia con caracteres especiales (como @).
+    Si detect_word aparece dentro de una etiqueta <b>, se quita la negrita para esa parte;
+    el resto del formato se conserva. Se utiliza BeautifulSoup para procesar el HTML y
+    un patrón con lookarounds para que coincida correctamente, incluso si la palabra
+    comienza con caracteres especiales (por ejemplo, "@").
     """
-    # Procesamos el texto con BeautifulSoup (si es HTML, sino devolverá el mismo texto)
     soup = BeautifulSoup(text, 'html.parser')
-    # Usamos lookarounds en lugar de \b para que coincida incluso si detect_word empieza con @ u otro carácter no alfanumérico.
+    # Patrón que captura la palabra exacta (usando lookarounds)
     regex = re.compile(r'(?<!\w)' + re.escape(detect_word) + r'(?!\w)', re.IGNORECASE)
+    
+    # Función para procesar etiquetas <b> que contengan la palabra
+    def process_bold_tag(tag):
+        content = tag.decode_contents(formatter="html")
+        parts = regex.split(content)
+        if len(parts) == 1:
+            return  # no se encontró la palabra en este tag
+        new_fragments = []
+        # Usamos regex.findall para obtener las coincidencias
+        matches = regex.findall(content)
+        # Intercalamos las partes y coincidencias
+        for i, part in enumerate(parts):
+            if part:
+                # Si la parte es diferente a la palabra, la volvemos a envolver en <b>
+                new_b = soup.new_tag("b")
+                new_b.append(NavigableString(part))
+                new_fragments.append(new_b)
+            if i < len(matches):
+                # La coincidencia se reemplaza por replace_word sin negrita
+                new_fragments.append(NavigableString(replace_word))
+        for frag in new_fragments:
+            tag.insert_before(frag)
+        tag.decompose()
+    
+    # Procesar todas las etiquetas <b> que contengan la palabra
+    for bold_tag in soup.find_all("b"):
+        if detect_word.lower() in bold_tag.get_text().lower():
+            process_bold_tag(bold_tag)
+    
+    # Procesar el resto de los nodos de texto que no estén dentro de <b>
     for node in soup.find_all(string=True):
-        if node.parent.name in ['script', 'style']:
+        if node.parent and node.parent.name == "b":
             continue
         new_text = regex.sub(replace_word, node)
         node.replace_with(new_text)
+    
     return str(soup)
 
-# Handler para /start en el Bot de Reemplazo (bienvenida y menú de comandos)
+# Handler para /start en el Bot de Reemplazo (bienvenida y menú)
 async def rep_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     menu = (
         "Comandos disponibles:\n"
@@ -65,7 +97,11 @@ async def rep_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def rep_iniciar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.bot_data["configurations"] = {}
     chat_id = update.effective_chat.id
-    context.bot_data["configurations"][chat_id] = {"active": False, "detect_word": None, "replace_word": None}
+    context.bot_data["configurations"][chat_id] = {
+        "active": False,
+        "detect_word": None,
+        "replace_word": None
+    }
     await update.message.reply_text("¿Cuál es la palabra que deseas detectar?")
     return DETECT_WORD
 
@@ -98,22 +134,25 @@ async def rep_detener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     else:
         await update.message.reply_text("No hay configuración activa.")
 
-# Procesamiento de mensajes
+# Procesamiento de mensajes individuales
 async def rep_process_individual_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
-    configurations = context.bot_data.get("configurations", {})
-    if chat_id not in configurations or not configurations[chat_id].get("active", False):
+    configs = context.bot_data.get("configurations", {})
+    if chat_id not in configs or not configs[chat_id].get("active", False):
         return
-    detect_word = configurations[chat_id]["detect_word"]
-    replace_word_val = configurations[chat_id]["replace_word"]
+    detect_word = configs[chat_id]["detect_word"]
+    replace_word_val = configs[chat_id]["replace_word"]
+
+    # Si hay mensaje de texto:
     if update.message.text:
         new_text = replace_text(update.message.text, detect_word, replace_word_val)
-        if new_text != update.message.text:
-            await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="HTML")
-            try:
-                await update.message.delete()
-            except Exception as e:
-                logging.error("Error al borrar mensaje: %s", e)
+        # Se envía el mensaje (ya sea modificado o igual al original)
+        await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="HTML")
+        try:
+            await update.message.delete()
+        except Exception as e:
+            logging.error("Error al borrar mensaje: %s", e)
+    # Si hay un mensaje con caption (medios):
     elif update.message.caption:
         new_caption = replace_text(update.message.caption, detect_word, replace_word_val)
         if update.message.photo:
@@ -148,7 +187,19 @@ async def rep_process_individual_message(update: Update, context: ContextTypes.D
             await update.message.delete()
         except Exception as e:
             logging.error("Error al borrar mensaje: %s", e)
+    else:
+        # Si no hay texto ni caption, se copia el mensaje tal cual
+        await context.bot.copy_message(
+            chat_id=chat_id,
+            from_chat_id=chat_id,
+            message_id=update.message.message_id
+        )
+        try:
+            await update.message.delete()
+        except Exception as e:
+            logging.error("Error al borrar mensaje: %s", e)
 
+# Procesamiento de mensajes en grupo de medios
 async def rep_process_media_group(context: CallbackContext) -> None:
     job = context.job
     mg_id = job.data
@@ -158,11 +209,11 @@ async def rep_process_media_group(context: CallbackContext) -> None:
         return
     messages.sort(key=lambda m: m.message_id)
     chat_id = messages[0].chat.id
-    configurations = context.bot_data.get("configurations", {})
-    if chat_id not in configurations or not configurations[chat_id].get("active", False):
+    configs = context.bot_data.get("configurations", {})
+    if chat_id not in configs or not configs[chat_id].get("active", False):
         return
-    detect_word = configurations[chat_id]["detect_word"]
-    replace_word_val = configurations[chat_id]["replace_word"]
+    detect_word = configs[chat_id]["detect_word"]
+    replace_word_val = configs[chat_id]["replace_word"]
     media_group_list = []
     for msg in messages:
         caption = msg.caption if msg.caption else ""
@@ -190,6 +241,7 @@ async def rep_process_media_group(context: CallbackContext) -> None:
         except Exception as e:
             logging.error("Error al borrar mensaje: %s", e)
 
+# Manejo de mensajes (individual o media group)
 async def rep_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message.media_group_id:
         mg_id = update.message.media_group_id
@@ -233,7 +285,9 @@ async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 def run_polling_in_thread(app: Application, loop: asyncio.AbstractEventLoop):
     asyncio.set_event_loop(loop)
+    # Parcheamos add_signal_handler para evitar errores en threads secundarios
     loop.add_signal_handler = lambda sig, callback, *args, **kwargs: None
+    # Configuramos el menú de comandos en el bot de reemplazo
     loop.run_until_complete(app.bot.set_my_commands([
         ("start", "Mostrar menú de comandos"),
         ("iniciar", "Configurar el bot de reemplazo"),
