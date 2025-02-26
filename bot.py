@@ -24,64 +24,72 @@ from telegram.ext import (
 # Configuración del Bot Maestro
 #############################################
 
-MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # <-- Reemplaza con tu token real
+MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # <-- Reemplaza con el token real
 
 #############################################
 # Funciones compartidas para Bots de Reemplazo
 #############################################
 
-# Estados para la conversación de configuración
+# Estados para la conversación de configuración en el bot de reemplazo
 DETECT_WORD, REPLACE_WORD = range(2)
 
 def replace_text(html_text: str, detect_word: str, replace_word: str) -> str:
     """
-    Procesa el contenido HTML para reemplazar todas las ocurrencias de detect_word por replace_word.
-    
-    Dentro de etiquetas <b> que contengan la palabra, se quita el formato (la palabra reemplazada
-    se muestra sin negrita) y se conserva el resto del contenido con su formato.
-    
-    Se utiliza BeautifulSoup y un patrón con lookarounds para que coincida correctamente
-    incluso si detect_word empieza con caracteres especiales (por ejemplo, "@").
+    Procesa el contenido HTML para reemplazar todas las ocurrencias de detect_word
+    por replace_word.
+
+    Si la coincidencia se encuentra dentro de una etiqueta <b>, se quita la negrita
+    en esa parte (se inserta como texto plano) y se conserva el resto del contenido
+    en negrita. Fuera de <b> se realiza una sustitución simple.
+    Se usan lookarounds para que la coincidencia funcione correctamente incluso
+    si detect_word empieza con caracteres especiales (por ejemplo, "@").
     """
     soup = BeautifulSoup(html_text, 'html.parser')
+    # Patrón con lookarounds: no se permite un carácter de palabra antes ni después.
     regex = re.compile(r'(?<!\w)' + re.escape(detect_word) + r'(?!\w)', re.IGNORECASE)
 
-    def process_bold_tag(tag):
-        content = tag.decode_contents(formatter="html")
-        # Dividimos el contenido según el patrón
-        parts = regex.split(content)
-        # Si no se encontró la palabra, no se modifica este tag
-        if len(parts) == 1:
-            return
-        new_fragments = []
-        matches = regex.findall(content)
-        # Intercalamos partes y coincidencias
-        for i, part in enumerate(parts):
-            if part:
-                # Reinserta la parte en negrita (ya que estaba en <b>)
-                new_b = soup.new_tag("b")
-                new_b.append(NavigableString(part))
-                new_fragments.append(new_b)
-            if i < len(matches):
-                # La coincidencia se reemplaza por replace_word sin negrita
-                new_fragments.append(NavigableString(replace_word))
-        for frag in new_fragments:
-            tag.insert_before(frag)
-        tag.decompose()
-
-    # Procesar etiquetas <b> que contengan la palabra
-    for bold_tag in soup.find_all("b"):
-        if detect_word.lower() in bold_tag.get_text().lower():
-            process_bold_tag(bold_tag)
-    # Procesar el resto de los nodos de texto que no están dentro de <b>
+    # Procesamos cada nodo de texto
     for node in soup.find_all(string=True):
-        if node.parent and node.parent.name == "b":
+        # Saltamos nodos dentro de script o style
+        if node.parent and node.parent.name in ['script', 'style']:
             continue
-        new_text = regex.sub(replace_word, node)
-        node.replace_with(new_text)
+        # Determinar si el nodo está dentro de una etiqueta <b>
+        is_bold = False
+        parent = node.parent
+        while parent is not None:
+            if parent.name == 'b':
+                is_bold = True
+                break
+            parent = parent.parent
+        if not is_bold:
+            # Si no es parte de un bloque en negrita, sustitución simple
+            new_text = regex.sub(replace_word, node)
+            node.replace_with(new_text)
+        else:
+            # Si está en negrita, procesamos manualmente para quitar negrita solo en la palabra
+            new_nodes = []
+            last_end = 0
+            for match in regex.finditer(node):
+                start, end = match.span()
+                if start > last_end:
+                    pre_text = node[last_end:start]
+                    # Reenvuelve el segmento original en <b>
+                    new_b = soup.new_tag("b")
+                    new_b.string = pre_text
+                    new_nodes.append(new_b)
+                # Inserta la palabra reemplazada como texto plano (sin <b>)
+                new_nodes.append(NavigableString(replace_word))
+                last_end = end
+            if last_end < len(node):
+                remainder = node[last_end:]
+                new_b = soup.new_tag("b")
+                new_b.string = remainder
+                new_nodes.append(new_b)
+            if new_nodes:
+                node.replace_with(*new_nodes)
     return str(soup)
 
-# Handler para /start en el Bot de Reemplazo (menú de comandos)
+# Handler para /start en el Bot de Reemplazo (bienvenida y menú de comandos)
 async def rep_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     menu = (
         "Comandos disponibles:\n"
@@ -131,30 +139,25 @@ async def rep_detener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     else:
         await update.message.reply_text("No hay configuración activa.")
 
-# Función auxiliar para obtener el contenido en HTML (con formato) del mensaje
+# Función auxiliar para obtener el contenido HTML del mensaje (con formato)
 def get_message_html(message: Update.message.__class__) -> str:
-    # Si el mensaje tiene entidades, usamos to_html(); de lo contrario, devolvemos el texto plano escapado
-    if message.text and message.entities:
-        try:
-            return message.to_html()  # Método incorporado de PTB v20
-        except Exception:
-            return message.text
-    return message.text or ""
+    try:
+        return message.to_html()  # Si el mensaje tiene formato, esto lo convierte a HTML
+    except Exception:
+        return message.text or ""
 
 def get_caption_html(message: Update.message.__class__) -> str:
-    if message.caption and message.caption_entities:
-        try:
-            return message.caption_html  # Si está disponible en PTB v20
-        except Exception:
-            return message.caption
-    return message.caption or ""
+    try:
+        return message.caption_html
+    except Exception:
+        return message.caption or ""
 
 # Procesamiento de mensajes individuales
 async def rep_process_individual_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     configs = context.bot_data.get("configurations", {})
+    # Si no hay configuración activa, se reenvía el post sin cambios
     if chat_id not in configs or not configs[chat_id].get("active", False):
-        # Si no hay configuración activa, se reenvía el mensaje original (incluyendo formato)
         if update.message.text:
             original_html = get_message_html(update.message)
             await context.bot.send_message(chat_id=chat_id, text=original_html, parse_mode="HTML")
@@ -189,7 +192,6 @@ async def rep_process_individual_message(update: Update, context: ContextTypes.D
                     parse_mode="HTML"
                 )
         else:
-            # Si no hay texto ni caption, se copia el mensaje
             await context.bot.copy_message(
                 chat_id=chat_id,
                 from_chat_id=chat_id,
@@ -201,22 +203,18 @@ async def rep_process_individual_message(update: Update, context: ContextTypes.D
             logging.error("Error al borrar mensaje: %s", e)
         return
 
-    # Si hay configuración activa, obtenemos la palabra a detectar y la de reemplazo
     detect_word = configs[chat_id]["detect_word"]
     replace_word_val = configs[chat_id]["replace_word"]
 
-    # Para mensajes de texto, convertimos a HTML (si tiene formato)
     if update.message.text:
         original_html = get_message_html(update.message)
         new_html = replace_text(original_html, detect_word, replace_word_val)
-        # Si no hay cambio, se envía el original; de lo contrario, el modificado
         send_text = new_html if new_html != original_html else original_html
         await context.bot.send_message(chat_id=chat_id, text=send_text, parse_mode="HTML")
         try:
             await update.message.delete()
         except Exception as e:
             logging.error("Error al borrar mensaje: %s", e)
-    # Para mensajes con caption (medios)
     elif update.message.caption:
         original_html = get_caption_html(update.message)
         new_html = replace_text(original_html, detect_word, replace_word_val)
@@ -276,7 +274,6 @@ async def rep_process_media_group(context: CallbackContext) -> None:
     chat_id = messages[0].chat.id
     configs = context.bot_data.get("configurations", {})
     if chat_id not in configs or not configs[chat_id].get("active", False):
-        # Si no hay configuración, reenviamos el grupo sin cambios
         if messages[0].caption:
             original_html = get_caption_html(messages[0])
             if messages[0].photo:
@@ -293,13 +290,13 @@ async def rep_process_media_group(context: CallbackContext) -> None:
             except Exception as e:
                 logging.error("Error al borrar mensaje: %s", e)
         return
+
     detect_word = configs[chat_id]["detect_word"]
     replace_word_val = configs[chat_id]["replace_word"]
     media_group_list = []
     for msg in messages:
         caption = msg.caption if msg.caption else ""
         original_html = caption
-        # Si hay entidades de formato en el caption, intentar obtener el HTML
         if msg.caption and msg.caption_entities:
             try:
                 original_html = msg.caption_html
