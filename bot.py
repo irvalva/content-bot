@@ -1,160 +1,280 @@
-import logging, asyncio
-from telegram import Update, InputMediaPhoto, InputMediaVideo, InputMediaAnimation, MessageEntity
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
-
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+import logging
+import re
+import os
+import asyncio
+from telegram import (
+    Update,
+    InputMediaPhoto,
+    InputMediaVideo,
+    InputMediaAudio,
+    InputMediaDocument,
 )
-logger = logging.getLogger(__name__)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ConversationHandler,
+    ContextTypes,
+    filters,
+    CallbackContext,
+)
 
-# Configuración por usuario: "detect" y "replace"
-user_config = {}
+#############################################
+# Funciones compartidas para Bots de Reemplazo
+#############################################
 
-def process_text(text, entities, detect, replace):
+# Estados del ConversationHandler para la configuración en bots de reemplazo
+DETECT_WORD, REPLACE_WORD = range(2)
+
+def replace_text(text: str, detect_word: str, replace_word: str) -> str:
     """
-    Busca la primera ocurrencia de `detect` en `text` y la reemplaza por `replace`.
-    Luego ajusta la lista de entities para que:
-      - Las entities antes de la ocurrencia se conservan.
-      - Las entities después se desplazan.
-      - Las que se solapan con la ocurrencia se recortan para que no abarquen el reemplazo.
-    Devuelve (new_text, new_entities).
-    Se asume una única ocurrencia.
+    Reemplaza todas las ocurrencias de detect_word por replace_word.
+    Elimina etiquetas <b> si la palabra aparece en negrita.
     """
-    idx = text.find(detect)
-    if idx == -1:
-        return text, entities
-    new_text = text[:idx] + replace + text[idx+len(detect):]
-    diff = len(replace) - len(detect)
-    new_entities = []
-    for ent in entities:
-        start = ent.offset
-        end = ent.offset + ent.length
-        if end <= idx:
-            # Entity antes: se mantiene
-            new_entities.append(ent)
-        elif start >= idx+len(detect):
-            # Entity después: se desplaza
-            ent_dict = ent.to_dict()
-            ent_dict["offset"] = start + diff
-            new_entities.append(MessageEntity.de_json(ent_dict, None))
-        elif start < idx and end > idx+len(detect):
-            # Entity abarca la ocurrencia: se recorta para que termine en idx
-            new_length = idx - start
-            if new_length > 0:
-                ent_dict = ent.to_dict()
-                ent_dict["length"] = new_length
-                new_entities.append(MessageEntity.de_json(ent_dict, None))
-        elif start < idx and end > idx:
-            # Entity que termina en medio de detect: recortar para que termine en idx
-            new_length = idx - start
-            if new_length > 0:
-                ent_dict = ent.to_dict()
-                ent_dict["length"] = new_length
-                new_entities.append(MessageEntity.de_json(ent_dict, None))
-        # Entities que empiezan dentro del detect se descartan.
-    return new_text, new_entities
+    pattern = re.compile(r'(?:<b>)?(' + re.escape(detect_word) + r')(?:</b>)?', re.IGNORECASE)
+    return pattern.sub(replace_word, text)
 
-async def setdetect(update: Update, context: CallbackContext) -> None:
-    if not context.args:
-        await update.message.reply_text("Uso: /setdetect <palabra>")
-        return
-    detect = " ".join(context.args)
-    user_config.setdefault(update.message.from_user.id, {})["detect"] = detect
-    await update.message.reply_text(f"Palabra a detectar configurada: {detect}")
+# Comandos y funciones de configuración para bots de reemplazo
 
-async def setreplace(update: Update, context: CallbackContext) -> None:
-    if not context.args:
-        await update.message.reply_text("Uso: /setreplace <palabra>")
-        return
-    replace = " ".join(context.args)
-    user_config.setdefault(update.message.from_user.id, {})["replace"] = replace
-    await update.message.reply_text(f"Palabra de reemplazo configurada: {replace}")
+async def rep_iniciar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Inicia el proceso de configuración en el bot de reemplazo."""
+    # Inicializamos la configuración en context.bot_data
+    context.bot_data["configurations"] = context.bot_data.get("configurations", {})
+    chat_id = update.effective_chat.id
+    context.bot_data["configurations"][chat_id] = {"active": False, "detect_word": None, "replace_word": None}
+    await update.message.reply_text("¿Cuál es la palabra que deseas detectar?")
+    return DETECT_WORD
 
-async def reset(update: Update, context: CallbackContext) -> None:
-    user_config.pop(update.message.from_user.id, None)
-    await update.message.reply_text("Configuración reiniciada.")
+async def rep_detect_word(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    chat_id = update.effective_chat.id
+    text = update.message.text
+    context.bot_data["configurations"][chat_id]["detect_word"] = text
+    await update.message.reply_text("¿Cuál es la palabra que deseas usar para reemplazar?")
+    return REPLACE_WORD
 
-async def process_posts(update: Update, context: CallbackContext) -> None:
-    config = user_config.get(update.message.from_user.id)
-    if not config:
-        return
-    detect = config.get("detect")
-    replace = config.get("replace")
-    if not detect or not replace:
-        return
+async def rep_replace_word(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    chat_id = update.effective_chat.id
+    text = update.message.text
+    conf = context.bot_data["configurations"][chat_id]
+    conf["replace_word"] = text
+    conf["active"] = True
+    await update.message.reply_text(
+        f"Configuración completada:\n"
+        f"Palabra a detectar: {conf['detect_word']}\n"
+        f"Palabra de reemplazo: {conf['replace_word']}\n"
+        f"Envía posts para procesar."
+    )
+    return ConversationHandler.END
 
-    # Procesamiento de álbumes
-    if update.message.media_group_id:
-        group_id = update.message.media_group_id
-        group = context.bot_data.setdefault(group_id, [])
-        group.append(update.message)
-        if "scheduled_album_tasks" not in context.bot_data:
-            context.bot_data["scheduled_album_tasks"] = {}
-        if group_id in context.bot_data["scheduled_album_tasks"]:
-            return
-        async def process_album():
-            await asyncio.sleep(1)
-            album = context.bot_data.pop(group_id, [])
-            context.bot_data["scheduled_album_tasks"].pop(group_id, None)
-            media_list = []
-            for msg in album:
-                if msg.caption:
-                    orig = msg.caption
-                    new_caption, new_entities = process_text(orig, msg.caption_entities or [], detect, replace)
-                else:
-                    new_caption, new_entities = None, None
-                if msg.photo:
-                    media_list.append(InputMediaPhoto(msg.photo[-1].file_id, caption=new_caption, caption_entities=new_entities))
-                elif msg.video:
-                    media_list.append(InputMediaVideo(msg.video.file_id, caption=new_caption, caption_entities=new_entities))
-                elif hasattr(msg, "animation") and msg.animation is not None:
-                    media_list.append(InputMediaAnimation(msg.animation.file_id, caption=new_caption, caption_entities=new_entities))
-            if media_list:
-                await context.bot.send_media_group(chat_id=update.message.chat_id, media=media_list)
-            for msg in album:
-                try:
-                    await context.bot.delete_message(chat_id=msg.chat_id, message_id=msg.message_id)
-                except Exception:
-                    pass
-        task = asyncio.create_task(process_album())
-        context.bot_data["scheduled_album_tasks"][group_id] = task
-        return
-
-    # Procesamiento individual
-    if update.message.text:
-        orig = update.message.text
-        new_text, new_entities = process_text(orig, update.message.entities or [], detect, replace)
-        await update.message.reply_text(new_text, entities=new_entities)
-    elif update.message.photo:
-        caption = update.message.caption or ""
-        new_caption, new_entities = process_text(caption, update.message.caption_entities or [], detect, replace)
-        await context.bot.send_photo(chat_id=update.message.chat_id, photo=update.message.photo[-1].file_id, caption=new_caption, caption_entities=new_entities)
-    elif update.message.video:
-        caption = update.message.caption or ""
-        new_caption, new_entities = process_text(caption, update.message.caption_entities or [], detect, replace)
-        await context.bot.send_video(chat_id=update.message.chat_id, video=update.message.video.file_id, caption=new_caption, caption_entities=new_entities)
-    elif update.message.animation:
-        caption = update.message.caption or ""
-        new_caption, new_entities = process_text(caption, update.message.caption_entities or [], detect, replace)
-        await context.bot.send_animation(chat_id=update.message.chat_id, animation=update.message.animation.file_id, caption=new_caption, caption_entities=new_entities)
+async def rep_detener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    if "configurations" in context.bot_data and chat_id in context.bot_data["configurations"]:
+        context.bot_data["configurations"][chat_id]["active"] = False
+        await update.message.reply_text("El bot se ha detenido. Usa /iniciar para reconfigurar.")
     else:
-        try:
-            await context.bot.copy_message(chat_id=update.message.chat_id, from_chat_id=update.message.chat_id, message_id=update.message.message_id)
-        except Exception:
-            pass
-    try:
-        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
-    except Exception:
-        pass
+        await update.message.reply_text("No hay configuración activa.")
 
-def main():
-    TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("setdetect", setdetect))
-    app.add_handler(CommandHandler("setreplace", setreplace))
-    app.add_handler(CommandHandler("reset", reset))
-    app.add_handler(MessageHandler(filters.ALL, process_posts))
-    app.run_polling()
+# Funciones para procesar mensajes en bots de reemplazo
+
+async def rep_process_individual_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    configurations = context.bot_data.get("configurations", {})
+    if chat_id not in configurations or not configurations[chat_id].get("active", False):
+        return
+
+    detect_word = configurations[chat_id]["detect_word"]
+    replace_word_val = configurations[chat_id]["replace_word"]
+
+    # Procesa mensajes de texto
+    if update.message.text:
+        new_text = replace_text(update.message.text, detect_word, replace_word_val)
+        if new_text != update.message.text:
+            await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="HTML")
+            try:
+                await update.message.delete()
+            except Exception as e:
+                logging.error("Error al borrar mensaje: %s", e)
+    # Procesa mensajes con medios y caption
+    elif update.message.caption:
+        new_caption = replace_text(update.message.caption, detect_word, replace_word_val)
+        if update.message.photo:
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=update.message.photo[-1].file_id,
+                caption=new_caption,
+                parse_mode="HTML"
+            )
+        elif update.message.video:
+            await context.bot.send_video(
+                chat_id=chat_id,
+                video=update.message.video.file_id,
+                caption=new_caption,
+                parse_mode="HTML"
+            )
+        elif update.message.audio:
+            await context.bot.send_audio(
+                chat_id=chat_id,
+                audio=update.message.audio.file_id,
+                caption=new_caption,
+                parse_mode="HTML"
+            )
+        elif update.message.document:
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=update.message.document.file_id,
+                caption=new_caption,
+                parse_mode="HTML"
+            )
+        try:
+            await update.message.delete()
+        except Exception as e:
+            logging.error("Error al borrar mensaje: %s", e)
+
+async def rep_process_media_group(context: CallbackContext) -> None:
+    """Procesa un grupo de medios preservando el orden original."""
+    job = context.job
+    mg_id = job.data
+    media_groups = context.bot_data.get("media_groups", {})
+    messages = media_groups.pop(mg_id, [])
+    if not messages:
+        return
+
+    messages.sort(key=lambda m: m.message_id)
+    chat_id = messages[0].chat.id
+
+    configurations = context.bot_data.get("configurations", {})
+    if chat_id not in configurations or not configurations[chat_id].get("active", False):
+        return
+
+    detect_word = configurations[chat_id]["detect_word"]
+    replace_word_val = configurations[chat_id]["replace_word"]
+    media_group_list = []
+
+    for msg in messages:
+        caption = msg.caption if msg.caption else ""
+        new_caption = replace_text(caption, detect_word, replace_word_val) if caption else caption
+        if msg.photo:
+            media = InputMediaPhoto(media=msg.photo[-1].file_id, caption=new_caption, parse_mode="HTML")
+        elif msg.video:
+            media = InputMediaVideo(media=msg.video.file_id, caption=new_caption, parse_mode="HTML")
+        elif msg.audio:
+            media = InputMediaAudio(media=msg.audio.file_id, caption=new_caption, parse_mode="HTML")
+        elif msg.document:
+            media = InputMediaDocument(media=msg.document.file_id, caption=new_caption, parse_mode="HTML")
+        else:
+            media = None
+        if media:
+            media_group_list.append(media)
+        else:
+            new_text = replace_text(msg.text, detect_word, replace_word_val)
+            await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="HTML")
+
+    if media_group_list:
+        await context.bot.send_media_group(chat_id=chat_id, media=media_group_list)
+
+    for msg in messages:
+        try:
+            await msg.delete()
+        except Exception as e:
+            logging.error("Error al borrar mensaje: %s", e)
+
+async def rep_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Maneja los mensajes entrantes en el bot de reemplazo.  
+    Si el mensaje forma parte de un media group se acumula y se procesa luego.
+    """
+    if update.message.media_group_id:
+        mg_id = update.message.media_group_id
+        media_groups = context.bot_data.get("media_groups", {})
+        media_groups.setdefault(mg_id, []).append(update.message)
+        context.bot_data["media_groups"] = media_groups
+        context.job_queue.run_once(rep_process_media_group, 1, name=mg_id, data=mg_id)
+    else:
+        await rep_process_individual_message(update, context)
+
+def setup_replacement_bot(app: Application) -> None:
+    """
+    Agrega los handlers correspondientes a un bot de reemplazo.
+    """
+    # ConversationHandler para configurar las palabras con /iniciar
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("iniciar", rep_iniciar)],
+        states={
+            DETECT_WORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, rep_detect_word)],
+            REPLACE_WORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, rep_replace_word)],
+        },
+        fallbacks=[],
+    )
+    app.add_handler(conv_handler)
+    app.add_handler(CommandHandler("detener", rep_detener))
+    app.add_handler(MessageHandler(filters.ALL, rep_message_handler))
+
+#############################################
+# Funciones para el Bot Maestro
+#############################################
+
+# Estados para el ConversationHandler del bot maestro (para agregar tokens)
+ADD_BOT_TOKEN = range(1)
+
+async def master_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "Bienvenido al Bot Maestro.\n"
+        "Este bot es exclusivo para agregar bots de reemplazo.\n"
+        "Usa /addbot para vincular un nuevo bot (envía el token de BotFather)."
+    )
+
+async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("Envía el token del bot que deseas agregar:")
+    return ADD_BOT_TOKEN
+
+async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    token = update.message.text.strip()
+    try:
+        # Se crea una nueva Application para el bot de reemplazo usando el token proporcionado
+        rep_app = Application.builder().token(token).build()
+        setup_replacement_bot(rep_app)
+        # Almacena la instancia del bot agregado (opcional: para control o registro)
+        context.bot_data.setdefault("additional_bots", {})[token] = rep_app
+        # Inicia el bot de reemplazo en segundo plano
+        asyncio.create_task(rep_app.run_polling())
+        await update.message.reply_text("Bot de reemplazo agregado exitosamente.")
+    except Exception as e:
+        await update.message.reply_text(f"Error al agregar el bot: {e}")
+    return ConversationHandler.END
+
+#############################################
+# Función main (inicializa el Bot Maestro)
+#############################################
+
+def main() -> None:
+    # Configuración básica de logging
+    logging.basicConfig(
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    )
+
+    # Se obtiene el token del bot maestro de la variable de entorno
+    MASTER_TOKEN = os.environ.get("7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g")
+    if not MASTER_TOKEN:
+        print("Debes definir la variable de entorno MASTER_TELEGRAM_TOKEN con el token del bot maestro.")
+        return
+
+    master_app = Application.builder().token(MASTER_TOKEN).build()
+
+    # Handler para /start del bot maestro
+    master_app.add_handler(CommandHandler("start", master_start))
+
+    # ConversationHandler para agregar bots (comando /addbot)
+    conv_master = ConversationHandler(
+        entry_points=[CommandHandler("addbot", master_addbot_start)],
+        states={
+            ADD_BOT_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, master_addbot_receive_token)]
+        },
+        fallbacks=[],
+    )
+    master_app.add_handler(conv_master)
+
+    # Inicia el bot maestro en modo polling
+    master_app.run_polling()
 
 if __name__ == "__main__":
     main()
