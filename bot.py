@@ -25,8 +25,11 @@ user_config = {}
 def adjust_entities(original: str, new_text: str, entities, detect: str, replace: str):
     """
     Ajusta los offsets y longitudes de las entities en función de la diferencia
-    de longitud entre 'detect' y 'replace'.
-    Nota: Solución sencilla; si la entity no toca el detect, no se modifica.
+    de longitud entre 'detect' y 'replace'. Se recorren todas las ocurrencias de
+    'detect' en el texto original y se incrementa la longitud de las entities que
+    se superpongan.
+    
+    Nota: Es una solución sencilla y puede no cubrir todos los casos.
     """
     diff = len(replace) - len(detect)
     new_entities = []
@@ -34,11 +37,11 @@ def adjust_entities(original: str, new_text: str, entities, detect: str, replace
         new_offset = ent.offset
         new_length = ent.length
         pos = 0
-        # Solo se ajustan si detect aparece dentro del rango de la entity.
         while True:
             idx = original.find(detect, pos)
             if idx == -1:
                 break
+            # Si la ocurrencia de detect se encuentra dentro del entity, aumentar su longitud
             if ent.offset <= idx < ent.offset + ent.length:
                 new_length += diff
             pos = idx + len(detect)
@@ -50,17 +53,31 @@ def adjust_entities(original: str, new_text: str, entities, detect: str, replace
 
 def filter_entities(new_text: str, entities, replaced: str):
     """
-    Filtra y elimina de la lista de entities aquellas cuyo rango en el nuevo texto
-    incluya (total o parcialmente) la cadena reemplazada.
-    De esta forma, el texto resultante que provenga del reemplazo no conserva formato.
+    Recorre la lista de entities y, si alguna abarca (total o parcialmente) el comienzo
+    de la cadena reemplazada, la recorta para que termine justo antes.
+    
+    Así, si el nuevo texto es, por ejemplo:
+      "Contáctame ya en @CrecimientoConSofia"
+    y una entity (bold) abarca desde el inicio hasta más allá del inicio de "@CrecimientoConSofia",
+    se recortará para que termine justo en el inicio de "@".
     """
+    idx = new_text.find(replaced)
+    if idx == -1:
+        return entities
     filtered = []
     for ent in entities:
-        ent_text = new_text[ent.offset:ent.offset + ent.length]
-        # Si la cadena reemplazada aparece en el texto de la entity, descartarla.
-        if replaced in ent_text:
-            continue
-        filtered.append(ent)
+        # Si la entity se extiende hasta o más allá del inicio de la cadena reemplazada,
+        # recortarla para que termine justo en ese inicio.
+        if ent.offset < idx < ent.offset + ent.length:
+            new_length = idx - ent.offset
+            if new_length > 0:
+                ent_dict = ent.to_dict()
+                ent_dict["length"] = new_length
+                ent = MessageEntity.de_json(ent_dict, None)
+                filtered.append(ent)
+            # Si new_length <= 0, descartamos la entity
+        else:
+            filtered.append(ent)
     return filtered
 
 # Comando: /setdetect <palabra>
@@ -107,7 +124,7 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
             return  # Ya se programó la tarea para este grupo
 
         async def process_album():
-            await asyncio.sleep(1)  # Espera para recibir todas las partes del álbum
+            await asyncio.sleep(1)  # Espera 1 segundo para que se reciban todas las partes del álbum
             album = context.bot_data.pop(group_id, [])
             context.bot_data["scheduled_album_tasks"].pop(group_id, None)
             media_list = []
