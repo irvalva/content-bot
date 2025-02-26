@@ -52,41 +52,33 @@ def replace_text(html_text: str, detect_word: str, replace_word: str) -> str:
     por replace_word.
     
     Si la coincidencia se encuentra dentro de una etiqueta <b>, se inserta la palabra
-    reemplazada como texto plano (quitándole la negrita) y se conserva el resto del contenido en negrita.
-    
-    Fuera de <b> se realiza una sustitución simple.
+    reemplazada como texto plano (quitándole la negrita) y se conserva el resto del contenido
+    en negrita. Fuera de <b> se realiza una sustitución simple.
     Se usan lookarounds para que la coincidencia funcione correctamente incluso
     si detect_word empieza con caracteres especiales (por ejemplo, "@").
     """
     soup = BeautifulSoup(html_text, 'html.parser')
-    # Patrón que busca la palabra EXACTA, sin caracteres de palabra antes ni después.
     regex = re.compile(r'(?<!\w)' + re.escape(detect_word) + r'(?!\w)', re.IGNORECASE)
 
-    # Procesa nodos dentro de <b> para reemplazar solo la parte que coincide y quitarle la negrita a esa parte.
     for bold_tag in soup.find_all("b"):
         if detect_word.lower() in bold_tag.get_text().lower():
             content = bold_tag.decode_contents(formatter="html")
             parts = regex.split(content)
             matches = regex.findall(content)
-            # Si no se encontró, no modificamos
             if len(parts) == 1:
                 continue
             new_fragments = []
             for i, part in enumerate(parts):
                 if part:
-                    # Reinserta la parte en negrita
                     new_b = soup.new_tag("b")
                     new_b.append(NavigableString(part))
                     new_fragments.append(new_b)
                 if i < len(matches):
-                    # La coincidencia se reemplaza sin etiqueta (sin negrita)
                     new_fragments.append(NavigableString(replace_word))
-            # Inserta las nuevas partes antes del tag original y elimina el original
             for frag in new_fragments:
                 bold_tag.insert_before(frag)
             bold_tag.decompose()
 
-    # Procesa nodos de texto que no estén dentro de <b>
     for node in soup.find_all(string=True):
         if node.parent and node.parent.name == "b":
             continue
@@ -99,6 +91,9 @@ def replace_text(html_text: str, detect_word: str, replace_word: str) -> str:
 # Handlers del Bot de Reemplazo
 #############################################
 
+# Definir estados para la conversación
+DETECT_WORD, REPLACE_WORD = range(2)
+
 # /start: Muestra el menú de comandos
 async def rep_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     menu = (
@@ -108,7 +103,7 @@ async def rep_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text("¡Hola! Soy el Bot de Reemplazo.\n" + menu)
 
-# Conversación para configurar la palabra a detectar y de reemplazo
+# Conversación para configurar las palabras
 async def rep_iniciar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.bot_data["configurations"] = {}
     chat_id = update.effective_chat.id
@@ -153,7 +148,6 @@ async def rep_detener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def rep_process_individual_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     configs = context.bot_data.get("configurations", {})
-    # Si no hay configuración activa, se reenvía el post original con su formato
     if chat_id not in configs or not configs[chat_id].get("active", False):
         if update.message.text:
             original_html = get_message_html(update.message)
@@ -161,15 +155,39 @@ async def rep_process_individual_message(update: Update, context: ContextTypes.D
         elif update.message.caption:
             original_html = get_caption_html(update.message)
             if update.message.photo:
-                await context.bot.send_photo(chat_id=chat_id, photo=update.message.photo[-1].file_id, caption=original_html, parse_mode="HTML")
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=update.message.photo[-1].file_id,
+                    caption=original_html,
+                    parse_mode="HTML"
+                )
             elif update.message.video:
-                await context.bot.send_video(chat_id=chat_id, video=update.message.video.file_id, caption=original_html, parse_mode="HTML")
+                await context.bot.send_video(
+                    chat_id=chat_id,
+                    video=update.message.video.file_id,
+                    caption=original_html,
+                    parse_mode="HTML"
+                )
             elif update.message.audio:
-                await context.bot.send_audio(chat_id=chat_id, audio=update.message.audio.file_id, caption=original_html, parse_mode="HTML")
+                await context.bot.send_audio(
+                    chat_id=chat_id,
+                    audio=update.message.audio.file_id,
+                    caption=original_html,
+                    parse_mode="HTML"
+                )
             elif update.message.document:
-                await context.bot.send_document(chat_id=chat_id, document=update.message.document.file_id, caption=original_html, parse_mode="HTML")
+                await context.bot.send_document(
+                    chat_id=chat_id,
+                    document=update.message.document.file_id,
+                    caption=original_html,
+                    parse_mode="HTML"
+                )
         else:
-            await context.bot.copy_message(chat_id=chat_id, from_chat_id=chat_id, message_id=update.message.message_id)
+            await context.bot.copy_message(
+                chat_id=chat_id,
+                from_chat_id=chat_id,
+                message_id=update.message.message_id
+            )
         try:
             await update.message.delete()
         except Exception as e:
@@ -193,25 +211,49 @@ async def rep_process_individual_message(update: Update, context: ContextTypes.D
         new_html = replace_text(original_html, detect_word, replace_word_val)
         send_text = new_html if new_html != original_html else original_html
         if update.message.photo:
-            await context.bot.send_photo(chat_id=chat_id, photo=update.message.photo[-1].file_id, caption=send_text, parse_mode="HTML")
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=update.message.photo[-1].file_id,
+                caption=send_text,
+                parse_mode="HTML"
+            )
         elif update.message.video:
-            await context.bot.send_video(chat_id=chat_id, video=update.message.video.file_id, caption=send_text, parse_mode="HTML")
+            await context.bot.send_video(
+                chat_id=chat_id,
+                video=update.message.video.file_id,
+                caption=send_text,
+                parse_mode="HTML"
+            )
         elif update.message.audio:
-            await context.bot.send_audio(chat_id=chat_id, audio=update.message.audio.file_id, caption=send_text, parse_mode="HTML")
+            await context.bot.send_audio(
+                chat_id=chat_id,
+                audio=update.message.audio.file_id,
+                caption=send_text,
+                parse_mode="HTML"
+            )
         elif update.message.document:
-            await context.bot.send_document(chat_id=chat_id, document=update.message.document.file_id, caption=send_text, parse_mode="HTML")
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=update.message.document.file_id,
+                caption=send_text,
+                parse_mode="HTML"
+            )
         try:
             await update.message.delete()
         except Exception as e:
             logging.error("Error al borrar mensaje: %s", e)
     else:
-        await context.bot.copy_message(chat_id=chat_id, from_chat_id=chat_id, message_id=update.message.message_id)
+        await context.bot.copy_message(
+            chat_id=chat_id,
+            from_chat_id=chat_id,
+            message_id=update.message.message_id
+        )
         try:
             await update.message.delete()
         except Exception as e:
             logging.error("Error al borrar mensaje: %s", e)
 
-# Procesamiento de grupos de medios (media group)
+# Procesamiento de grupos de medios
 async def rep_process_media_group(context: CallbackContext) -> None:
     job = context.job
     mg_id = job.data
@@ -222,7 +264,6 @@ async def rep_process_media_group(context: CallbackContext) -> None:
     messages.sort(key=lambda m: m.message_id)
     chat_id = messages[0].chat.id
     configs = context.bot_data.get("configurations", {})
-    # Si no hay configuración activa, reenviamos el grupo sin cambios
     if chat_id not in configs or not configs[chat_id].get("active", False):
         if messages[0].caption:
             original_html = get_caption_html(messages[0])
@@ -247,7 +288,6 @@ async def rep_process_media_group(context: CallbackContext) -> None:
 
     detect_word = configs[chat_id]["detect_word"]
     replace_word_val = configs[chat_id]["replace_word"]
-    # Procesa el caption del primer mensaje (único caption permitido en media group)
     processed_caption = ""
     if messages[0].caption:
         original_html = get_caption_html(messages[0])
@@ -293,7 +333,7 @@ async def rep_process_media_group(context: CallbackContext) -> None:
         except Exception as e:
             logging.error("Error al borrar mensaje: %s", e)
 
-# Manejo de mensajes entrantes (individual o media group)
+# Manejo de mensajes entrantes
 async def rep_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message.media_group_id:
         mg_id = update.message.media_group_id
@@ -337,9 +377,7 @@ async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 def run_polling_in_thread(app: Application, loop: asyncio.AbstractEventLoop):
     asyncio.set_event_loop(loop)
-    # Parchea add_signal_handler para evitar errores en threads secundarios
     loop.add_signal_handler = lambda sig, callback, *args, **kwargs: None
-    # Configura el menú de comandos en el bot de reemplazo
     loop.run_until_complete(app.bot.set_my_commands([
         ("start", "Mostrar menú de comandos"),
         ("iniciar", "Configurar el bot de reemplazo"),
