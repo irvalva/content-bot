@@ -197,7 +197,7 @@ def setup_replacement_bot(app: Application) -> None:
     # Handler para /start (bienvenida)
     app.add_handler(CommandHandler("start", rep_start))
     
-    # Handler para iniciar la configuración con /iniciar
+    # ConversationHandler para la configuración mediante /iniciar
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("iniciar", rep_iniciar)],
         states={
@@ -229,10 +229,23 @@ async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ADD_BOT_TOKEN
 
 def run_polling_in_thread(app: Application):
-    # Crea un nuevo event loop en este hilo y ejecuta run_polling sin manejo de señales.
+    """
+    Crea un nuevo event loop en este hilo y ejecuta manualmente los pasos asíncronos
+    para iniciar el bot de reemplazo, evitando el uso de run_polling() en el thread principal.
+    """
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    app.run_polling(close_loop=False, handle_signals=False)
+
+    async def run():
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling()
+        await app.updater.idle()
+
+    try:
+        loop.run_until_complete(run())
+    except Exception as e:
+        logging.exception("Error en run_polling_in_thread: %s", e)
 
 async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     token = update.message.text.strip()
