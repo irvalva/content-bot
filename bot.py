@@ -24,27 +24,31 @@ from telegram.ext import (
 #############################################
 
 # Inserta aquí el token de tu Bot Maestro
-MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # <-- Reemplaza este valor con el token real
+MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # <-- Reemplaza este valor con tu token real
 
 #############################################
 # Funciones compartidas para Bots de Reemplazo
 #############################################
 
-# Estados del ConversationHandler para la configuración en bots de reemplazo
+# Estados para la conversación de configuración en el bot de reemplazo
 DETECT_WORD, REPLACE_WORD = range(2)
 
 def replace_text(text: str, detect_word: str, replace_word: str) -> str:
     """
-    Reemplaza todas las ocurrencias de detect_word por replace_word.
+    Reemplaza todas las ocurrencias de 'detect_word' por 'replace_word'.
     Elimina etiquetas <b> si la palabra aparece en negrita.
     """
     pattern = re.compile(r'(?:<b>)?(' + re.escape(detect_word) + r')(?:</b>)?', re.IGNORECASE)
     return pattern.sub(replace_word, text)
 
-# Comandos y funciones de configuración para los Bots de Reemplazo
+# Handler opcional para /start en el Bot de Reemplazo
+async def rep_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "¡Hola! Soy el Bot de Reemplazo. Para comenzar la configuración, usa el comando /iniciar."
+    )
 
+# Handlers para la configuración mediante conversación
 async def rep_iniciar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Inicia el proceso de configuración en el bot de reemplazo."""
     context.bot_data["configurations"] = context.bot_data.get("configurations", {})
     chat_id = update.effective_chat.id
     context.bot_data["configurations"][chat_id] = {"active": False, "detect_word": None, "replace_word": None}
@@ -80,8 +84,7 @@ async def rep_detener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     else:
         await update.message.reply_text("No hay configuración activa.")
 
-# Funciones para procesar mensajes en Bots de Reemplazo
-
+# Procesamiento de mensajes en el Bot de Reemplazo
 async def rep_process_individual_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     configurations = context.bot_data.get("configurations", {})
@@ -91,7 +94,6 @@ async def rep_process_individual_message(update: Update, context: ContextTypes.D
     detect_word = configurations[chat_id]["detect_word"]
     replace_word_val = configurations[chat_id]["replace_word"]
 
-    # Procesa mensajes de texto
     if update.message.text:
         new_text = replace_text(update.message.text, detect_word, replace_word_val)
         if new_text != update.message.text:
@@ -100,7 +102,6 @@ async def rep_process_individual_message(update: Update, context: ContextTypes.D
                 await update.message.delete()
             except Exception as e:
                 logging.error("Error al borrar mensaje: %s", e)
-    # Procesa mensajes con medios y caption
     elif update.message.caption:
         new_caption = replace_text(update.message.caption, detect_word, replace_word_val)
         if update.message.photo:
@@ -137,7 +138,6 @@ async def rep_process_individual_message(update: Update, context: ContextTypes.D
             logging.error("Error al borrar mensaje: %s", e)
 
 async def rep_process_media_group(context: CallbackContext) -> None:
-    """Procesa un grupo de medios preservando el orden original."""
     job = context.job
     mg_id = job.data
     media_groups = context.bot_data.get("media_groups", {})
@@ -147,7 +147,6 @@ async def rep_process_media_group(context: CallbackContext) -> None:
 
     messages.sort(key=lambda m: m.message_id)
     chat_id = messages[0].chat.id
-
     configurations = context.bot_data.get("configurations", {})
     if chat_id not in configurations or not configurations[chat_id].get("active", False):
         return
@@ -185,10 +184,6 @@ async def rep_process_media_group(context: CallbackContext) -> None:
             logging.error("Error al borrar mensaje: %s", e)
 
 async def rep_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Maneja los mensajes entrantes en el bot de reemplazo.  
-    Si el mensaje forma parte de un media group se acumula y se procesa luego.
-    """
     if update.message.media_group_id:
         mg_id = update.message.media_group_id
         media_groups = context.bot_data.get("media_groups", {})
@@ -199,9 +194,10 @@ async def rep_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await rep_process_individual_message(update, context)
 
 def setup_replacement_bot(app: Application) -> None:
-    """
-    Agrega los handlers correspondientes a un bot de reemplazo.
-    """
+    # Handler para /start (bienvenida)
+    app.add_handler(CommandHandler("start", rep_start))
+    
+    # Handler para iniciar la configuración con /iniciar
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("iniciar", rep_iniciar)],
         states={
@@ -233,10 +229,7 @@ async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ADD_BOT_TOKEN
 
 def run_polling_in_thread(app: Application):
-    """
-    Crea un nuevo event loop en este hilo y ejecuta run_polling() para el bot de reemplazo,
-    desactivando el manejo de señales para evitar errores en hilos que no sean el principal.
-    """
+    # Crea un nuevo event loop en este hilo y ejecuta run_polling sin manejo de señales.
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     app.run_polling(close_loop=False, handle_signals=False)
@@ -247,23 +240,17 @@ async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFA
         rep_app = Application.builder().token(token).build()
         setup_replacement_bot(rep_app)
         context.bot_data.setdefault("additional_bots", {})[token] = rep_app
-        # Inicia run_polling() en un hilo separado para el bot de reemplazo
         threading.Thread(target=run_polling_in_thread, args=(rep_app,), daemon=True).start()
         await update.message.reply_text("Bot de reemplazo agregado exitosamente.")
     except Exception as e:
         await update.message.reply_text(f"Error al agregar el bot: {e}")
     return ConversationHandler.END
 
-#############################################
-# Función main (inicializa el Bot Maestro)
-#############################################
-
 def main() -> None:
     logging.basicConfig(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
     )
     master_app = Application.builder().token(MASTER_TELEGRAM_TOKEN).build()
-
     master_app.add_handler(CommandHandler("start", master_start))
     conv_master = ConversationHandler(
         entry_points=[CommandHandler("addbot", master_addbot_start)],
