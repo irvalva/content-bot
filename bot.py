@@ -24,7 +24,7 @@ from telegram.ext import (
 #############################################
 
 # Inserta aquí el token de tu Bot Maestro
-MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # <-- Reemplaza este valor con tu token real
+MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # <-- Reemplaza con el token real
 
 #############################################
 # Funciones compartidas para Bots de Reemplazo
@@ -233,8 +233,11 @@ async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ADD_BOT_TOKEN
 
 def run_polling_in_thread(app: Application, loop: asyncio.AbstractEventLoop):
-    # Establece el event loop en el thread y ejecuta run_polling de forma bloqueante.
+    # Establece el nuevo event loop en este thread...
     asyncio.set_event_loop(loop)
+    # ...y parchea add_signal_handler para que no haga nada:
+    loop.add_signal_handler = lambda sig, callback, *args, **kwargs: None
+    # Ahora llama a run_polling de forma bloqueante:
     app.run_polling(close_loop=False)
 
 async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -243,7 +246,6 @@ async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFA
         rep_app = Application.builder().token(token).build()
         setup_replacement_bot(rep_app)
         context.bot_data.setdefault("additional_bots", {})[token] = rep_app
-        # Creamos un nuevo event loop para este thread y lo pasamos a run_polling_in_thread
         new_loop = asyncio.new_event_loop()
         threading.Thread(target=run_polling_in_thread, args=(rep_app, new_loop), daemon=True).start()
         await update.message.reply_text("Bot de reemplazo agregado exitosamente.")
@@ -259,9 +261,7 @@ def main() -> None:
     master_app.add_handler(CommandHandler("start", master_start))
     conv_master = ConversationHandler(
         entry_points=[CommandHandler("addbot", master_addbot_start)],
-        states={
-            ADD_BOT_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, master_addbot_receive_token)]
-        },
+        states={ADD_BOT_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, master_addbot_receive_token)]},
         fallbacks=[],
     )
     master_app.add_handler(conv_master)
@@ -269,3 +269,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
