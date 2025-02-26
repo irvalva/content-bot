@@ -26,8 +26,7 @@ def adjust_entities(original: str, new_text: str, entities, detect: str, replace
     """
     Ajusta los offsets y longitudes de las entities en función de la diferencia
     de longitud entre 'detect' y 'replace'.
-    
-    Nota: Es una solución sencilla y puede no cubrir casos muy complejos.
+    Nota: Solución sencilla; si la entity no toca el detect, no se modifica.
     """
     diff = len(replace) - len(detect)
     new_entities = []
@@ -35,13 +34,12 @@ def adjust_entities(original: str, new_text: str, entities, detect: str, replace
         new_offset = ent.offset
         new_length = ent.length
         pos = 0
+        # Solo se ajustan si detect aparece dentro del rango de la entity.
         while True:
             idx = original.find(detect, pos)
             if idx == -1:
                 break
-            if idx < ent.offset:
-                new_offset += diff
-            elif ent.offset <= idx < ent.offset + ent.length:
+            if ent.offset <= idx < ent.offset + ent.length:
                 new_length += diff
             pos = idx + len(detect)
         ent_dict = ent.to_dict()
@@ -52,39 +50,17 @@ def adjust_entities(original: str, new_text: str, entities, detect: str, replace
 
 def filter_entities(new_text: str, entities, replaced: str):
     """
-    Recorre la lista de entities y, para cada ocurrencia de 'replaced' en el nuevo texto,
-    recorta la entity que se solape (es decir, ajusta su longitud para que termine justo antes
-    de la ocurrencia). Si una entity queda sin contenido, se elimina.
+    Filtra y elimina de la lista de entities aquellas cuyo rango en el nuevo texto
+    incluya (total o parcialmente) la cadena reemplazada.
+    De esta forma, el texto resultante que provenga del reemplazo no conserva formato.
     """
-    occurrences = []
-    start = 0
-    while True:
-        pos = new_text.find(replaced, start)
-        if pos == -1:
-            break
-        occurrences.append((pos, pos + len(replaced)))
-        start = pos + len(replaced)
     filtered = []
     for ent in entities:
-        ent_start = ent.offset
-        ent_end = ent.offset + ent.length
-        modified = False
-        for occ in occurrences:
-            if ent_start < occ[0] < ent_end:
-                new_length = occ[0] - ent_start
-                if new_length > 0:
-                    ent_dict = ent.to_dict()
-                    ent_dict["length"] = new_length
-                    ent = MessageEntity.de_json(ent_dict, None)
-                    modified = True
-                else:
-                    ent = None
-                break
-            elif ent_start >= occ[0] and ent_end <= occ[1]:
-                ent = None
-                break
-        if ent is not None:
-            filtered.append(ent)
+        ent_text = new_text[ent.offset:ent.offset + ent.length]
+        # Si la cadena reemplazada aparece en el texto de la entity, descartarla.
+        if replaced in ent_text:
+            continue
+        filtered.append(ent)
     return filtered
 
 # Comando: /setdetect <palabra>
@@ -131,7 +107,7 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
             return  # Ya se programó la tarea para este grupo
 
         async def process_album():
-            await asyncio.sleep(1)  # Espera 1 segundo para que se reciban todas las partes del álbum
+            await asyncio.sleep(1)  # Espera para recibir todas las partes del álbum
             album = context.bot_data.pop(group_id, [])
             context.bot_data["scheduled_album_tasks"].pop(group_id, None)
             media_list = []
