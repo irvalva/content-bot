@@ -24,28 +24,28 @@ from telegram.ext import (
 # Configuración del Bot Maestro
 #############################################
 
-# Inserta aquí el token de tu Bot Maestro
-MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # <-- Reemplaza con tu token real
+MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reemplaza con el token real
 
 #############################################
 # Funciones compartidas para Bots de Reemplazo
 #############################################
 
-# Estados para la conversación de configuración en el bot de reemplazo
+# Estados para la conversación
 DETECT_WORD, REPLACE_WORD = range(2)
 
 def replace_text(text: str, detect_word: str, replace_word: str) -> str:
     """
-    Procesa el HTML del mensaje para reemplazar todas las ocurrencias de detect_word
-    por replace_word, quitando cualquier formato de negrita que envuelva esa palabra.
-    Se preserva el resto del formato HTML.
+    Procesa el contenido (HTML o plain text) para reemplazar todas las ocurrencias de detect_word
+    por replace_word, quitándole el formato (por ejemplo, negrita) a la palabra reemplazada.
+    
+    Se utiliza BeautifulSoup para preservar el resto del formato HTML y se usa lookaround
+    para que coincida correctamente incluso si la palabra inicia con caracteres especiales (como @).
     """
+    # Procesamos el texto con BeautifulSoup (si es HTML, sino devolverá el mismo texto)
     soup = BeautifulSoup(text, 'html.parser')
-    # Expresión regular para buscar la palabra completa (case-insensitive)
-    regex = re.compile(r'\b' + re.escape(detect_word) + r'\b', re.IGNORECASE)
-    # Iteramos sobre todos los nodos de texto
+    # Usamos lookarounds en lugar de \b para que coincida incluso si detect_word empieza con @ u otro carácter no alfanumérico.
+    regex = re.compile(r'(?<!\w)' + re.escape(detect_word) + r'(?!\w)', re.IGNORECASE)
     for node in soup.find_all(string=True):
-        # Evitamos procesar ciertos tags si es necesario (script, style, etc.)
         if node.parent.name in ['script', 'style']:
             continue
         new_text = regex.sub(replace_word, node)
@@ -61,15 +61,11 @@ async def rep_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text("¡Hola! Soy el Bot de Reemplazo.\n" + menu)
 
-# Handlers para la configuración mediante conversación
+# Handlers de configuración (conversación)
 async def rep_iniciar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.bot_data["configurations"] = context.bot_data.get("configurations", {})
+    context.bot_data["configurations"] = {}
     chat_id = update.effective_chat.id
-    context.bot_data["configurations"][chat_id] = {
-        "active": False,
-        "detect_word": None,
-        "replace_word": None
-    }
+    context.bot_data["configurations"][chat_id] = {"active": False, "detect_word": None, "replace_word": None}
     await update.message.reply_text("¿Cuál es la palabra que deseas detectar?")
     return DETECT_WORD
 
@@ -96,22 +92,20 @@ async def rep_replace_word(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def rep_detener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
-    if "configurations" in context.bot_data and chat_id in context.bot_data["configurations"]:
+    if chat_id in context.bot_data.get("configurations", {}):
         context.bot_data["configurations"][chat_id]["active"] = False
         await update.message.reply_text("El bot se ha detenido. Usa /iniciar para reconfigurar.")
     else:
         await update.message.reply_text("No hay configuración activa.")
 
-# Procesamiento de mensajes en el Bot de Reemplazo
+# Procesamiento de mensajes
 async def rep_process_individual_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     configurations = context.bot_data.get("configurations", {})
     if chat_id not in configurations or not configurations[chat_id].get("active", False):
         return
-
     detect_word = configurations[chat_id]["detect_word"]
     replace_word_val = configurations[chat_id]["replace_word"]
-
     if update.message.text:
         new_text = replace_text(update.message.text, detect_word, replace_word_val)
         if new_text != update.message.text:
@@ -162,17 +156,14 @@ async def rep_process_media_group(context: CallbackContext) -> None:
     messages = media_groups.pop(mg_id, [])
     if not messages:
         return
-
     messages.sort(key=lambda m: m.message_id)
     chat_id = messages[0].chat.id
     configurations = context.bot_data.get("configurations", {})
     if chat_id not in configurations or not configurations[chat_id].get("active", False):
         return
-
     detect_word = configurations[chat_id]["detect_word"]
     replace_word_val = configurations[chat_id]["replace_word"]
     media_group_list = []
-
     for msg in messages:
         caption = msg.caption if msg.caption else ""
         new_caption = replace_text(caption, detect_word, replace_word_val) if caption else caption
@@ -191,10 +182,8 @@ async def rep_process_media_group(context: CallbackContext) -> None:
         else:
             new_text = replace_text(msg.text, detect_word, replace_word_val)
             await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="HTML")
-
     if media_group_list:
         await context.bot.send_media_group(chat_id=chat_id, media=media_group_list)
-
     for msg in messages:
         try:
             await msg.delete()
@@ -212,10 +201,7 @@ async def rep_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await rep_process_individual_message(update, context)
 
 def setup_replacement_bot(app: Application) -> None:
-    # Handler para /start (bienvenida y menú de comandos)
     app.add_handler(CommandHandler("start", rep_start))
-    
-    # ConversationHandler para la configuración mediante /iniciar
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("iniciar", rep_iniciar)],
         states={
@@ -232,7 +218,6 @@ def setup_replacement_bot(app: Application) -> None:
 # Funciones para el Bot Maestro
 #############################################
 
-# Estado para el ConversationHandler del bot maestro (para agregar tokens)
 ADD_BOT_TOKEN = range(1)
 
 async def master_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -247,16 +232,13 @@ async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ADD_BOT_TOKEN
 
 def run_polling_in_thread(app: Application, loop: asyncio.AbstractEventLoop):
-    # Establece el event loop en este thread y parchea add_signal_handler para evitar errores
     asyncio.set_event_loop(loop)
     loop.add_signal_handler = lambda sig, callback, *args, **kwargs: None
-    # Configura el menú de comandos en el bot de reemplazo
     loop.run_until_complete(app.bot.set_my_commands([
         ("start", "Mostrar menú de comandos"),
         ("iniciar", "Configurar el bot de reemplazo"),
         ("detener", "Detener el bot de reemplazo")
     ]))
-    # Llama a run_polling de forma bloqueante
     app.run_polling(close_loop=False)
 
 async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -288,5 +270,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
