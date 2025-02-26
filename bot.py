@@ -18,6 +18,7 @@ from telegram.ext import (
     ContextTypes,
     filters,
     CallbackContext,
+    JobQueue,
 )
 
 #############################################
@@ -32,7 +33,7 @@ MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # <-- 
 
 def get_message_html(message: Update.message.__class__) -> str:
     try:
-        return message.to_html()  # Convierte el mensaje formateado a HTML
+        return message.to_html()  # Si el mensaje tiene formato, se obtiene HTML
     except Exception:
         return message.text or ""
 
@@ -48,18 +49,16 @@ def get_caption_html(message: Update.message.__class__) -> str:
 
 def replace_text(html_text: str, detect_word: str, replace_word: str) -> str:
     """
-    Procesa el contenido HTML para reemplazar todas las ocurrencias de detect_word
-    por replace_word.
+    Procesa el contenido HTML para reemplazar todas las ocurrencias de detect_word por replace_word.
     
-    Si la coincidencia se encuentra dentro de una etiqueta <b>, se inserta la palabra
-    reemplazada como texto plano (quitándole la negrita) y se conserva el resto del contenido
-    en negrita. Fuera de <b> se realiza una sustitución simple.
-    Se usan lookarounds para que la coincidencia funcione correctamente incluso
-    si detect_word empieza con caracteres especiales (por ejemplo, "@").
+    Si la coincidencia se encuentra dentro de una etiqueta <b>, se reemplaza la palabra sin negrita
+    y se conserva el resto del contenido en negrita. Fuera de <b> se hace una sustitución simple.
+    Se utiliza lookarounds para que la coincidencia funcione incluso si detect_word empieza con caracteres especiales.
     """
     soup = BeautifulSoup(html_text, 'html.parser')
     regex = re.compile(r'(?<!\w)' + re.escape(detect_word) + r'(?!\w)', re.IGNORECASE)
 
+    # Procesar nodos dentro de <b> para reemplazar la palabra quitándole la negrita
     for bold_tag in soup.find_all("b"):
         if detect_word.lower() in bold_tag.get_text().lower():
             content = bold_tag.decode_contents(formatter="html")
@@ -79,6 +78,7 @@ def replace_text(html_text: str, detect_word: str, replace_word: str) -> str:
                 bold_tag.insert_before(frag)
             bold_tag.decompose()
 
+    # Procesar nodos de texto fuera de <b>
     for node in soup.find_all(string=True):
         if node.parent and node.parent.name == "b":
             continue
@@ -91,10 +91,9 @@ def replace_text(html_text: str, detect_word: str, replace_word: str) -> str:
 # Handlers del Bot de Reemplazo
 #############################################
 
-# Definir estados para la conversación
+# Definición de estados para la conversación
 DETECT_WORD, REPLACE_WORD = range(2)
 
-# /start: Muestra el menú de comandos
 async def rep_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     menu = (
         "Comandos disponibles:\n"
@@ -103,7 +102,6 @@ async def rep_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text("¡Hola! Soy el Bot de Reemplazo.\n" + menu)
 
-# Conversación para configurar las palabras
 async def rep_iniciar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.bot_data["configurations"] = {}
     chat_id = update.effective_chat.id
@@ -144,11 +142,11 @@ async def rep_detener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     else:
         await update.message.reply_text("No hay configuración activa.")
 
-# Procesamiento de mensajes individuales
 async def rep_process_individual_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     configs = context.bot_data.get("configurations", {})
     if chat_id not in configs or not configs[chat_id].get("active", False):
+        # Si no hay configuración activa, reenviamos el mensaje original conservando el formato
         if update.message.text:
             original_html = get_message_html(update.message)
             await context.bot.send_message(chat_id=chat_id, text=original_html, parse_mode="HTML")
@@ -183,11 +181,7 @@ async def rep_process_individual_message(update: Update, context: ContextTypes.D
                     parse_mode="HTML"
                 )
         else:
-            await context.bot.copy_message(
-                chat_id=chat_id,
-                from_chat_id=chat_id,
-                message_id=update.message.message_id
-            )
+            await context.bot.copy_message(chat_id=chat_id, from_chat_id=chat_id, message_id=update.message.message_id)
         try:
             await update.message.delete()
         except Exception as e:
@@ -243,17 +237,12 @@ async def rep_process_individual_message(update: Update, context: ContextTypes.D
         except Exception as e:
             logging.error("Error al borrar mensaje: %s", e)
     else:
-        await context.bot.copy_message(
-            chat_id=chat_id,
-            from_chat_id=chat_id,
-            message_id=update.message.message_id
-        )
+        await context.bot.copy_message(chat_id=chat_id, from_chat_id=chat_id, message_id=update.message.message_id)
         try:
             await update.message.delete()
         except Exception as e:
             logging.error("Error al borrar mensaje: %s", e)
 
-# Procesamiento de grupos de medios
 async def rep_process_media_group(context: CallbackContext) -> None:
     job = context.job
     mg_id = job.data
@@ -265,6 +254,7 @@ async def rep_process_media_group(context: CallbackContext) -> None:
     chat_id = messages[0].chat.id
     configs = context.bot_data.get("configurations", {})
     if chat_id not in configs or not configs[chat_id].get("active", False):
+        # Si no hay configuración, reenviamos el grupo sin cambios
         if messages[0].caption:
             original_html = get_caption_html(messages[0])
             media_list = []
@@ -288,6 +278,7 @@ async def rep_process_media_group(context: CallbackContext) -> None:
 
     detect_word = configs[chat_id]["detect_word"]
     replace_word_val = configs[chat_id]["replace_word"]
+
     processed_caption = ""
     if messages[0].caption:
         original_html = get_caption_html(messages[0])
@@ -333,14 +324,17 @@ async def rep_process_media_group(context: CallbackContext) -> None:
         except Exception as e:
             logging.error("Error al borrar mensaje: %s", e)
 
-# Manejo de mensajes entrantes
 async def rep_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message.media_group_id:
         mg_id = update.message.media_group_id
         media_groups = context.bot_data.get("media_groups", {})
         media_groups.setdefault(mg_id, []).append(update.message)
         context.bot_data["media_groups"] = media_groups
-        context.job_queue.run_once(rep_process_media_group, 1, name=mg_id, data=mg_id)
+        if context.job_queue:
+            context.job_queue.run_once(rep_process_media_group, 1, name=mg_id, data=mg_id)
+        else:
+            # Si no hay JobQueue, llamamos directamente (sin retardo)
+            await rep_process_media_group(context)
     else:
         await rep_process_individual_message(update, context)
 
@@ -377,7 +371,14 @@ async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 def run_polling_in_thread(app: Application, loop: asyncio.AbstractEventLoop):
     asyncio.set_event_loop(loop)
+    # Parcheamos add_signal_handler para evitar errores en threads secundarios
     loop.add_signal_handler = lambda sig, callback, *args, **kwargs: None
+    # Inicializamos un JobQueue si no existe
+    if app.job_queue is None:
+        jq = JobQueue()
+        jq.start()
+        app.job_queue = jq
+    # Configuramos el menú de comandos en el bot de reemplazo
     loop.run_until_complete(app.bot.set_my_commands([
         ("start", "Mostrar menú de comandos"),
         ("iniciar", "Configurar el bot de reemplazo"),
@@ -403,6 +404,11 @@ def main() -> None:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
     )
     master_app = Application.builder().token(MASTER_TELEGRAM_TOKEN).build()
+    # Inicializamos JobQueue para el Bot Maestro (opcional, si se usan jobs)
+    if master_app.job_queue is None:
+        jq = JobQueue()
+        jq.start()
+        master_app.job_queue = jq
     master_app.add_handler(CommandHandler("start", master_start))
     conv_master = ConversationHandler(
         entry_points=[CommandHandler("addbot", master_addbot_start)],
