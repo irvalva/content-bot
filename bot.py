@@ -50,7 +50,11 @@ async def rep_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def rep_iniciar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.bot_data["configurations"] = context.bot_data.get("configurations", {})
     chat_id = update.effective_chat.id
-    context.bot_data["configurations"][chat_id] = {"active": False, "detect_word": None, "replace_word": None}
+    context.bot_data["configurations"][chat_id] = {
+        "active": False,
+        "detect_word": None,
+        "replace_word": None
+    }
     await update.message.reply_text("¿Cuál es la palabra que deseas detectar?")
     return DETECT_WORD
 
@@ -228,8 +232,8 @@ async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ADD_BOT_TOKEN
 
 def run_polling_in_thread(app: Application):
-    # Llamamos a run_polling de forma bloqueante en este hilo, sin manejo de señales.
-    app.run_polling(close_loop=False, handle_signals=False)
+    # Se invoca run_polling sin el argumento handle_signals (ya que no está soportado)
+    app.run_polling(close_loop=False)
 
 async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     token = update.message.text.strip()
