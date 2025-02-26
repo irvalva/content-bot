@@ -1,6 +1,7 @@
 import logging
 import re
 import threading
+import asyncio
 from telegram import (
     Update,
     InputMediaPhoto,
@@ -231,8 +232,9 @@ async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("Envía el token del bot que deseas agregar:")
     return ADD_BOT_TOKEN
 
-def run_polling_in_thread(app: Application):
-    # Se invoca run_polling sin el argumento handle_signals (ya que no está soportado)
+def run_polling_in_thread(app: Application, loop: asyncio.AbstractEventLoop):
+    # Establece el event loop en el thread y ejecuta run_polling de forma bloqueante.
+    asyncio.set_event_loop(loop)
     app.run_polling(close_loop=False)
 
 async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -241,7 +243,9 @@ async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFA
         rep_app = Application.builder().token(token).build()
         setup_replacement_bot(rep_app)
         context.bot_data.setdefault("additional_bots", {})[token] = rep_app
-        threading.Thread(target=run_polling_in_thread, args=(rep_app,), daemon=True).start()
+        # Creamos un nuevo event loop para este thread y lo pasamos a run_polling_in_thread
+        new_loop = asyncio.new_event_loop()
+        threading.Thread(target=run_polling_in_thread, args=(rep_app, new_loop), daemon=True).start()
         await update.message.reply_text("Bot de reemplazo agregado exitosamente.")
     except Exception as e:
         await update.message.reply_text(f"Error al agregar el bot: {e}")
