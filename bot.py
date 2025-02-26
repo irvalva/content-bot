@@ -2,6 +2,7 @@ import logging
 import re
 import threading
 import asyncio
+from bs4 import BeautifulSoup
 from telegram import (
     Update,
     InputMediaPhoto,
@@ -24,7 +25,7 @@ from telegram.ext import (
 #############################################
 
 # Inserta aquí el token de tu Bot Maestro
-MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # <-- Reemplaza con el token real
+MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # <-- Reemplaza con tu token real
 
 #############################################
 # Funciones compartidas para Bots de Reemplazo
@@ -35,17 +36,30 @@ DETECT_WORD, REPLACE_WORD = range(2)
 
 def replace_text(text: str, detect_word: str, replace_word: str) -> str:
     """
-    Reemplaza todas las ocurrencias de 'detect_word' por 'replace_word'.
-    Elimina etiquetas <b> si la palabra aparece en negrita.
+    Procesa el HTML del mensaje para reemplazar todas las ocurrencias de detect_word
+    por replace_word, quitando cualquier formato de negrita que envuelva esa palabra.
+    Se preserva el resto del formato HTML.
     """
-    pattern = re.compile(r'(?:<b>)?(' + re.escape(detect_word) + r')(?:</b>)?', re.IGNORECASE)
-    return pattern.sub(replace_word, text)
+    soup = BeautifulSoup(text, 'html.parser')
+    # Expresión regular para buscar la palabra completa (case-insensitive)
+    regex = re.compile(r'\b' + re.escape(detect_word) + r'\b', re.IGNORECASE)
+    # Iteramos sobre todos los nodos de texto
+    for node in soup.find_all(string=True):
+        # Evitamos procesar ciertos tags si es necesario (script, style, etc.)
+        if node.parent.name in ['script', 'style']:
+            continue
+        new_text = regex.sub(replace_word, node)
+        node.replace_with(new_text)
+    return str(soup)
 
-# Handler opcional para /start en el Bot de Reemplazo
+# Handler para /start en el Bot de Reemplazo (bienvenida y menú de comandos)
 async def rep_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        "¡Hola! Soy el Bot de Reemplazo. Para comenzar la configuración, usa el comando /iniciar."
+    menu = (
+        "Comandos disponibles:\n"
+        "/iniciar - Configurar el bot de reemplazo\n"
+        "/detener - Detener el bot de reemplazo"
     )
+    await update.message.reply_text("¡Hola! Soy el Bot de Reemplazo.\n" + menu)
 
 # Handlers para la configuración mediante conversación
 async def rep_iniciar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -198,7 +212,7 @@ async def rep_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await rep_process_individual_message(update, context)
 
 def setup_replacement_bot(app: Application) -> None:
-    # Handler para /start (bienvenida)
+    # Handler para /start (bienvenida y menú de comandos)
     app.add_handler(CommandHandler("start", rep_start))
     
     # ConversationHandler para la configuración mediante /iniciar
@@ -233,11 +247,16 @@ async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ADD_BOT_TOKEN
 
 def run_polling_in_thread(app: Application, loop: asyncio.AbstractEventLoop):
-    # Establece el nuevo event loop en este thread...
+    # Establece el event loop en este thread y parchea add_signal_handler para evitar errores
     asyncio.set_event_loop(loop)
-    # ...y parchea add_signal_handler para que no haga nada:
     loop.add_signal_handler = lambda sig, callback, *args, **kwargs: None
-    # Ahora llama a run_polling de forma bloqueante:
+    # Configura el menú de comandos en el bot de reemplazo
+    loop.run_until_complete(app.bot.set_my_commands([
+        ("start", "Mostrar menú de comandos"),
+        ("iniciar", "Configurar el bot de reemplazo"),
+        ("detener", "Detener el bot de reemplazo")
+    ]))
+    # Llama a run_polling de forma bloqueante
     app.run_polling(close_loop=False)
 
 async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -269,4 +288,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
