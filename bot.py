@@ -234,11 +234,12 @@ async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 def run_polling_in_thread(app: Application):
     """
-    Crea un nuevo event loop en este hilo y ejecuta run_polling() para el bot de reemplazo.
+    Crea un nuevo event loop en este hilo y ejecuta run_polling() para el bot de reemplazo,
+    desactivando el manejo de señales para evitar errores en hilos que no sean el principal.
     """
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    app.run_polling(close_loop=False)
+    app.run_polling(close_loop=False, handle_signals=False)
 
 async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     token = update.message.text.strip()
