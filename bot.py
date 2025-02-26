@@ -1,7 +1,6 @@
 import logging
 import re
 import threading
-import asyncio
 from telegram import (
     Update,
     InputMediaPhoto,
@@ -229,23 +228,8 @@ async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ADD_BOT_TOKEN
 
 def run_polling_in_thread(app: Application):
-    """
-    Crea un nuevo event loop en este hilo y ejecuta manualmente los pasos asíncronos
-    para iniciar el bot de reemplazo, evitando el uso de run_polling() en el thread principal.
-    """
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    async def run():
-        await app.initialize()
-        await app.start()
-        await app.updater.start_polling()
-        await app.updater.idle()
-
-    try:
-        loop.run_until_complete(run())
-    except Exception as e:
-        logging.exception("Error en run_polling_in_thread: %s", e)
+    # Llamamos a run_polling de forma bloqueante en este hilo, sin manejo de señales.
+    app.run_polling(close_loop=False, handle_signals=False)
 
 async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     token = update.message.text.strip()
