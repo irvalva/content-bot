@@ -6,7 +6,6 @@ from telegram import (
     InputMediaPhoto,
     InputMediaVideo,
     InputMediaAnimation,
-    MessageEntity,
 )
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
 
@@ -21,35 +20,6 @@ logger = logging.getLogger(__name__)
 #   "detect": la palabra a detectar.
 #   "replace": la palabra de reemplazo.
 user_config = {}
-
-def adjust_entities(original: str, new_text: str, entities, detect: str, replace: str):
-    """
-    Ajusta los offsets y longitudes de las entidades de formato en función
-    de las diferencias de longitud entre 'detect' y 'replace'.
-    
-    Nota: Esta función es sencilla y puede no cubrir todos los casos complejos.
-    """
-    diff = len(replace) - len(detect)
-    new_entities = []
-    for ent in entities:
-        new_offset = ent.offset
-        new_length = ent.length
-        pos = 0
-        while True:
-            idx = original.find(detect, pos)
-            if idx == -1:
-                break
-            if idx < ent.offset:
-                new_offset += diff
-            elif ent.offset <= idx < ent.offset + ent.length:
-                new_length += diff
-            pos = idx + len(detect)
-        new_ent_dict = ent.to_dict()
-        new_ent_dict["offset"] = new_offset
-        new_ent_dict["length"] = new_length
-        new_ent = MessageEntity.de_json(new_ent_dict, None)
-        new_entities.append(new_ent)
-    return new_entities
 
 # Comando: /setdetect <palabra>
 async def setdetect(update: Update, context: CallbackContext) -> None:
@@ -96,31 +66,28 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
             return  # Ya se programó la tarea para este grupo
 
         async def process_album():
-            await asyncio.sleep(1)  # Espera 1 segundo para que se reciban todos los mensajes del álbum
+            await asyncio.sleep(1)  # Espera 1 segundo para que se reciban todas las partes del álbum
             album = context.bot_data.pop(group_id, [])
             context.bot_data["scheduled_album_tasks"].pop(group_id, None)
             media_list = []
             for msg in album:
                 if msg.caption:
-                    new_caption = msg.caption.replace(detect, replace) if detect in msg.caption else msg.caption
-                    if msg.caption_entities:
-                        new_entities = adjust_entities(msg.caption, new_caption, msg.caption_entities, detect, replace)
-                    else:
-                        new_entities = None
+                    # Se reemplaza el texto sin conservar los entities para evitar formato indeseado.
+                    new_caption = msg.caption.replace(detect, replace)
                 else:
-                    new_caption, new_entities = None, None
+                    new_caption = None
 
                 if msg.photo:
                     media_list.append(
-                        InputMediaPhoto(msg.photo[-1].file_id, caption=new_caption, caption_entities=new_entities)
+                        InputMediaPhoto(msg.photo[-1].file_id, caption=new_caption)
                     )
                 elif msg.video:
                     media_list.append(
-                        InputMediaVideo(msg.video.file_id, caption=new_caption, caption_entities=new_entities)
+                        InputMediaVideo(msg.video.file_id, caption=new_caption)
                     )
                 elif hasattr(msg, "animation") and msg.animation is not None:
                     media_list.append(
-                        InputMediaAnimation(msg.animation.file_id, caption=new_caption, caption_entities=new_entities)
+                        InputMediaAnimation(msg.animation.file_id, caption=new_caption)
                     )
             if media_list:
                 await context.bot.send_media_group(chat_id=update.message.chat_id, media=media_list)
@@ -136,50 +103,32 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
 
     # --- Procesamiento de mensajes individuales ---
     if update.message.text:
-        new_text = update.message.text.replace(detect, replace) if detect in update.message.text else update.message.text
-        if update.message.entities:
-            new_entities = adjust_entities(update.message.text, new_text, update.message.entities, detect, replace)
-        else:
-            new_entities = None
-        await update.message.reply_text(new_text, entities=new_entities)
+        new_text = update.message.text.replace(detect, replace)
+        # Enviar el mensaje modificado sin entities para evitar formato no deseado
+        await update.message.reply_text(new_text)
     elif update.message.photo:
         caption = update.message.caption or ""
-        new_caption = caption.replace(detect, replace) if detect in caption else caption
-        if update.message.caption_entities:
-            new_entities = adjust_entities(caption, new_caption, update.message.caption_entities, detect, replace)
-        else:
-            new_entities = None
+        new_caption = caption.replace(detect, replace)
         await context.bot.send_photo(
             chat_id=update.message.chat_id,
             photo=update.message.photo[-1].file_id,
-            caption=new_caption,
-            caption_entities=new_entities,
+            caption=new_caption
         )
     elif update.message.video:
         caption = update.message.caption or ""
-        new_caption = caption.replace(detect, replace) if detect in caption else caption
-        if update.message.caption_entities:
-            new_entities = adjust_entities(caption, new_caption, update.message.caption_entities, detect, replace)
-        else:
-            new_entities = None
+        new_caption = caption.replace(detect, replace)
         await context.bot.send_video(
             chat_id=update.message.chat_id,
             video=update.message.video.file_id,
-            caption=new_caption,
-            caption_entities=new_entities,
+            caption=new_caption
         )
     elif update.message.animation:
         caption = update.message.caption or ""
-        new_caption = caption.replace(detect, replace) if detect in caption else caption
-        if update.message.caption_entities:
-            new_entities = adjust_entities(caption, new_caption, update.message.caption_entities, detect, replace)
-        else:
-            new_entities = None
+        new_caption = caption.replace(detect, replace)
         await context.bot.send_animation(
             chat_id=update.message.chat_id,
             animation=update.message.animation.file_id,
-            caption=new_caption,
-            caption_entities=new_entities,
+            caption=new_caption
         )
     else:
         try:
@@ -206,7 +155,7 @@ def main():
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(MessageHandler(filters.ALL, process_posts))
 
-    # Inicia el bot en modo polling; esta función se queda ejecutándose indefinidamente.
+    # Inicia el bot en modo polling; este método se queda ejecutándose indefinidamente.
     app.run_polling()
 
 if __name__ == "__main__":
