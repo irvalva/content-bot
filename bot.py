@@ -25,8 +25,7 @@ user_config = {}
 def adjust_entities(original: str, new_text: str, entities, detect: str, replace: str):
     """
     Ajusta los offsets y longitudes de las entities en función de la diferencia
-    de longitud entre 'detect' y 'replace'. Esta función recorre cada entity
-    y, para cada ocurrencia de 'detect' en el texto original, ajusta los offsets.
+    de longitud entre 'detect' y 'replace'.
     
     Nota: Es una solución sencilla y puede no cubrir casos muy complejos.
     """
@@ -54,7 +53,7 @@ def adjust_entities(original: str, new_text: str, entities, detect: str, replace
 def filter_entities(new_text: str, entities, replaced: str):
     """
     Recorre la lista de entities y, para cada ocurrencia de 'replaced' en el nuevo texto,
-    recorta la entity que se solape (es decir, ajusta su longitud para que termine en el inicio
+    recorta la entity que se solape (es decir, ajusta su longitud para que termine justo antes
     de la ocurrencia). Si una entity queda sin contenido, se elimina.
     """
     occurrences = []
@@ -71,7 +70,6 @@ def filter_entities(new_text: str, entities, replaced: str):
         ent_end = ent.offset + ent.length
         modified = False
         for occ in occurrences:
-            # Si la entity comienza antes de la ocurrencia y se extiende más allá de su inicio...
             if ent_start < occ[0] < ent_end:
                 new_length = occ[0] - ent_start
                 if new_length > 0:
@@ -82,7 +80,6 @@ def filter_entities(new_text: str, entities, replaced: str):
                 else:
                     ent = None
                 break
-            # Si la entity está completamente dentro de la ocurrencia, eliminarla.
             elif ent_start >= occ[0] and ent_end <= occ[1]:
                 ent = None
                 break
@@ -165,4 +162,93 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
                 await context.bot.send_media_group(chat_id=update.message.chat_id, media=media_list)
             for msg in album:
                 try:
-                    await context.bot.delete_message(chat_id=msg.chat_id, message_id=msg.message_i
+                    await context.bot.delete_message(chat_id=msg.chat_id, message_id=msg.message_id)
+                except Exception:
+                    pass
+
+        task = asyncio.create_task(process_album())
+        context.bot_data["scheduled_album_tasks"][group_id] = task
+        return
+
+    # --- Procesamiento de mensajes individuales ---
+    if update.message.text:
+        original = update.message.text
+        new_text = original.replace(detect, replace)
+        if update.message.entities:
+            new_entities = adjust_entities(original, new_text, update.message.entities, detect, replace)
+            new_entities = filter_entities(new_text, new_entities, replace)
+        else:
+            new_entities = None
+        await update.message.reply_text(new_text, entities=new_entities)
+    elif update.message.photo:
+        caption = update.message.caption or ""
+        new_caption = caption.replace(detect, replace) if detect in caption else caption
+        if update.message.caption_entities:
+            new_entities = adjust_entities(caption, new_caption, update.message.caption_entities, detect, replace)
+            new_entities = filter_entities(new_caption, new_entities, replace)
+        else:
+            new_entities = None
+        await context.bot.send_photo(
+            chat_id=update.message.chat_id,
+            photo=update.message.photo[-1].file_id,
+            caption=new_caption,
+            caption_entities=new_entities,
+        )
+    elif update.message.video:
+        caption = update.message.caption or ""
+        new_caption = caption.replace(detect, replace) if detect in caption else caption
+        if update.message.caption_entities:
+            new_entities = adjust_entities(caption, new_caption, update.message.caption_entities, detect, replace)
+            new_entities = filter_entities(new_caption, new_entities, replace)
+        else:
+            new_entities = None
+        await context.bot.send_video(
+            chat_id=update.message.chat_id,
+            video=update.message.video.file_id,
+            caption=new_caption,
+            caption_entities=new_entities,
+        )
+    elif update.message.animation:
+        caption = update.message.caption or ""
+        new_caption = caption.replace(detect, replace) if detect in caption else caption
+        if update.message.caption_entities:
+            new_entities = adjust_entities(caption, new_caption, update.message.caption_entities, detect, replace)
+            new_entities = filter_entities(new_caption, new_entities, replace)
+        else:
+            new_entities = None
+        await context.bot.send_animation(
+            chat_id=update.message.chat_id,
+            animation=update.message.animation.file_id,
+            caption=new_caption,
+            caption_entities=new_entities,
+        )
+    else:
+        try:
+            await context.bot.copy_message(
+                chat_id=update.message.chat_id,
+                from_chat_id=update.message.chat_id,
+                message_id=update.message.message_id,
+            )
+        except Exception:
+            pass
+
+    try:
+        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
+    except Exception:
+        pass
+
+def main():
+    TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reemplaza con el token real de tu bot
+    app = Application.builder().token(TOKEN).build()
+
+    # Registrar comandos
+    app.add_handler(CommandHandler("setdetect", setdetect))
+    app.add_handler(CommandHandler("setreplace", setreplace))
+    app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(MessageHandler(filters.ALL, process_posts))
+
+    # Inicia el bot en modo polling (se ejecuta indefinidamente)
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
