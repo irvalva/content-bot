@@ -239,15 +239,18 @@ async def start_replacement_bot(rep_app: Application):
 async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     token = update.message.text.strip()
     try:
+        # Se crea una nueva Application para el bot de reemplazo usando el token proporcionado
         rep_app = Application.builder().token(token).build()
         setup_replacement_bot(rep_app)
         context.bot_data.setdefault("additional_bots", {})[token] = rep_app
-        # En lugar de run_polling(), lanzamos la función asíncrona para iniciar el bot
-        asyncio.create_task(start_replacement_bot(rep_app))
+        # Ejecutamos run_polling() en un hilo separado para evitar conflictos con el event loop actual
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(None, lambda: rep_app.run_polling(close_loop=False))
         await update.message.reply_text("Bot de reemplazo agregado exitosamente.")
     except Exception as e:
         await update.message.reply_text(f"Error al agregar el bot: {e}")
     return ConversationHandler.END
+
 
 #############################################
 # Función main (inicializa el Bot Maestro)
