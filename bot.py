@@ -1,6 +1,5 @@
 import logging
 import re
-import os
 import asyncio
 from telegram import (
     Update,
@@ -18,6 +17,13 @@ from telegram.ext import (
     filters,
     CallbackContext,
 )
+
+#############################################
+# Configuración del Bot Maestro
+#############################################
+
+# Inserta aquí el token de tu Bot Maestro
+MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # <-- Reemplaza este valor con tu token
 
 #############################################
 # Funciones compartidas para Bots de Reemplazo
@@ -38,7 +44,6 @@ def replace_text(text: str, detect_word: str, replace_word: str) -> str:
 
 async def rep_iniciar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Inicia el proceso de configuración en el bot de reemplazo."""
-    # Inicializamos la configuración en context.bot_data
     context.bot_data["configurations"] = context.bot_data.get("configurations", {})
     chat_id = update.effective_chat.id
     context.bot_data["configurations"][chat_id] = {"active": False, "detect_word": None, "replace_word": None}
@@ -213,7 +218,7 @@ def setup_replacement_bot(app: Application) -> None:
 # Funciones para el Bot Maestro
 #############################################
 
-# Estados para el ConversationHandler del bot maestro (para agregar tokens)
+# Estado para el ConversationHandler del bot maestro (para agregar tokens)
 ADD_BOT_TOKEN = range(1)
 
 async def master_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -252,13 +257,7 @@ def main() -> None:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
     )
 
-    # Se obtiene el token del bot maestro de la variable de entorno
-    MASTER_TOKEN = os.environ.get("7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g")
-    if not MASTER_TOKEN:
-        print("Debes definir la variable de entorno MASTER_TELEGRAM_TOKEN con el token del bot maestro.")
-        return
-
-    master_app = Application.builder().token(MASTER_TOKEN).build()
+    master_app = Application.builder().token(MASTER_TELEGRAM_TOKEN).build()
 
     # Handler para /start del bot maestro
     master_app.add_handler(CommandHandler("start", master_start))
