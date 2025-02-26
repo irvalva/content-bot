@@ -240,8 +240,8 @@ async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFA
         setup_replacement_bot(rep_app)
         # Almacena la instancia del bot agregado (opcional: para control o registro)
         context.bot_data.setdefault("additional_bots", {})[token] = rep_app
-        # Inicia el bot de reemplazo en segundo plano
-        asyncio.create_task(rep_app.run_polling())
+        # Inicia el bot de reemplazo en segundo plano sin cerrar el event loop
+        asyncio.create_task(rep_app.run_polling(close_loop=False))
         await update.message.reply_text("Bot de reemplazo agregado exitosamente.")
     except Exception as e:
         await update.message.reply_text(f"Error al agregar el bot: {e}")
