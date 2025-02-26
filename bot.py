@@ -1,6 +1,5 @@
 import logging
 import asyncio
-import re
 from telegram import (
     Update,
     InputMediaPhoto,
@@ -25,11 +24,10 @@ user_config = {}
 def adjust_entities(original: str, new_text: str, entities, detect: str, replace: str):
     """
     Ajusta los offsets y longitudes de las entities en función de la diferencia
-    de longitud entre 'detect' y 'replace'. Se recorren todas las ocurrencias de
-    'detect' en el texto original y se incrementa la longitud de las entities que
-    se superpongan.
-    
-    Nota: Es una solución sencilla y puede no cubrir todos los casos.
+    de longitud entre 'detect' y 'replace'. Esta función recorre cada entity
+    y, para cada ocurrencia de 'detect' en el texto original que se encuentre dentro
+    de la entity, se incrementa la longitud.
+    Nota: Solución sencilla que puede no cubrir casos muy complejos.
     """
     diff = len(replace) - len(detect)
     new_entities = []
@@ -41,7 +39,6 @@ def adjust_entities(original: str, new_text: str, entities, detect: str, replace
             idx = original.find(detect, pos)
             if idx == -1:
                 break
-            # Si la ocurrencia de detect se encuentra dentro del entity, aumentar su longitud
             if ent.offset <= idx < ent.offset + ent.length:
                 new_length += diff
             pos = idx + len(detect)
@@ -51,31 +48,34 @@ def adjust_entities(original: str, new_text: str, entities, detect: str, replace
         new_entities.append(MessageEntity.de_json(ent_dict, None))
     return new_entities
 
-def filter_entities(new_text: str, entities, replaced: str):
+def filter_entities_for_replacement(new_text: str, entities, detect: str, replace: str, original_index: int):
     """
-    Recorre la lista de entities y, si alguna abarca (total o parcialmente) el comienzo
-    de la cadena reemplazada, la recorta para que termine justo antes.
+    Recorre la lista de entities y elimina o recorta aquellas que se solapen
+    con el rango donde se insertó la cadena de reemplazo en el nuevo texto.
     
-    Así, si el nuevo texto es, por ejemplo:
-      "Contáctame ya en @CrecimientoConSofia"
-    y una entity (bold) abarca desde el inicio hasta más allá del inicio de "@CrecimientoConSofia",
-    se recortará para que termine justo en el inicio de "@".
+    Se asume que en el nuevo texto, la porción reemplazada ocupa el rango:
+      [original_index, original_index + len(replace))
+    Se recortan las entities que se extiendan sobre ese rango, de modo que 
+    el formato se preserve en el texto anterior, y la porción reemplazada quede sin formato.
     """
-    idx = new_text.find(replaced)
-    if idx == -1:
-        return entities
+    start_repl = original_index
+    end_repl = original_index + len(replace)
     filtered = []
     for ent in entities:
-        # Si la entity se extiende hasta o más allá del inicio de la cadena reemplazada,
-        # recortarla para que termine justo en ese inicio.
-        if ent.offset < idx < ent.offset + ent.length:
-            new_length = idx - ent.offset
+        ent_start = ent.offset
+        ent_end = ent.offset + ent.length
+        # Si la entity se solapa con el rango reemplazado:
+        if ent_start < start_repl < ent_end:
+            # Recortar la entity para que termine justo al inicio del reemplazo.
+            new_length = start_repl - ent_start
             if new_length > 0:
                 ent_dict = ent.to_dict()
                 ent_dict["length"] = new_length
-                ent = MessageEntity.de_json(ent_dict, None)
-                filtered.append(ent)
-            # Si new_length <= 0, descartamos la entity
+                filtered.append(MessageEntity.de_json(ent_dict, None))
+            # Si new_length <= 0, descartamos la entity.
+        elif start_repl <= ent_start < end_repl:
+            # Entity inicia dentro del rango reemplazado: eliminarla.
+            continue
         else:
             filtered.append(ent)
     return filtered
@@ -130,10 +130,16 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
             media_list = []
             for msg in album:
                 if msg.caption:
-                    new_caption = msg.caption.replace(detect, replace) if detect in msg.caption else msg.caption
-                    if msg.caption_entities:
-                        new_entities = adjust_entities(msg.caption, new_caption, msg.caption_entities, detect, replace)
-                        new_entities = filter_entities(new_caption, new_entities, replace)
+                    try:
+                        original_caption = msg.caption
+                        # Intentamos obtener la posición de detect en el caption original.
+                        idx = original_caption.index(detect)
+                    except ValueError:
+                        idx = -1
+                    new_caption = original_caption.replace(detect, replace) if idx != -1 else original_caption
+                    if msg.caption_entities and idx != -1:
+                        new_entities = adjust_entities(original_caption, new_caption, msg.caption_entities, detect, replace)
+                        new_entities = filter_entities_for_replacement(new_caption, new_entities, detect, replace, idx)
                     else:
                         new_entities = None
                 else:
@@ -166,19 +172,27 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
     # --- Procesamiento de mensajes individuales ---
     if update.message.text:
         original = update.message.text
-        new_text = original.replace(detect, replace)
-        if update.message.entities:
+        try:
+            idx = original.index(detect)
+        except ValueError:
+            idx = -1
+        new_text = original.replace(detect, replace) if idx != -1 else original
+        if update.message.entities and idx != -1:
             new_entities = adjust_entities(original, new_text, update.message.entities, detect, replace)
-            new_entities = filter_entities(new_text, new_entities, replace)
+            new_entities = filter_entities_for_replacement(new_text, new_entities, detect, replace, idx)
         else:
             new_entities = None
         await update.message.reply_text(new_text, entities=new_entities)
     elif update.message.photo:
         caption = update.message.caption or ""
-        new_caption = caption.replace(detect, replace) if detect in caption else caption
-        if update.message.caption_entities:
+        try:
+            idx = caption.index(detect)
+        except ValueError:
+            idx = -1
+        new_caption = caption.replace(detect, replace) if idx != -1 else caption
+        if update.message.caption_entities and idx != -1:
             new_entities = adjust_entities(caption, new_caption, update.message.caption_entities, detect, replace)
-            new_entities = filter_entities(new_caption, new_entities, replace)
+            new_entities = filter_entities_for_replacement(new_caption, new_entities, detect, replace, idx)
         else:
             new_entities = None
         await context.bot.send_photo(
@@ -189,10 +203,14 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
         )
     elif update.message.video:
         caption = update.message.caption or ""
-        new_caption = caption.replace(detect, replace) if detect in caption else caption
-        if update.message.caption_entities:
+        try:
+            idx = caption.index(detect)
+        except ValueError:
+            idx = -1
+        new_caption = caption.replace(detect, replace) if idx != -1 else caption
+        if update.message.caption_entities and idx != -1:
             new_entities = adjust_entities(caption, new_caption, update.message.caption_entities, detect, replace)
-            new_entities = filter_entities(new_caption, new_entities, replace)
+            new_entities = filter_entities_for_replacement(new_caption, new_entities, detect, replace, idx)
         else:
             new_entities = None
         await context.bot.send_video(
@@ -203,10 +221,14 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
         )
     elif update.message.animation:
         caption = update.message.caption or ""
-        new_caption = caption.replace(detect, replace) if detect in caption else caption
-        if update.message.caption_entities:
+        try:
+            idx = caption.index(detect)
+        except ValueError:
+            idx = -1
+        new_caption = caption.replace(detect, replace) if idx != -1 else caption
+        if update.message.caption_entities and idx != -1:
             new_entities = adjust_entities(caption, new_caption, update.message.caption_entities, detect, replace)
-            new_entities = filter_entities(new_caption, new_entities, replace)
+            new_entities = filter_entities_for_replacement(new_caption, new_entities, detect, replace, idx)
         else:
             new_entities = None
         await context.bot.send_animation(
