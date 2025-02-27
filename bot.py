@@ -44,12 +44,12 @@ def convert_to_html(text: str, entities: list) -> str:
     last_index = 0
     for ent in sorted(entities, key=lambda e: e.offset):
         result += text[last_index:ent.offset]
-        seg = text[ent.offset: ent.offset+ent.length]
+        seg = text[ent.offset: ent.offset + ent.length]
         if ent.type == "bold":
             result += "<b>" + seg + "</b>"
         else:
             result += seg
-        last_index = ent.offset+ent.length
+        last_index = ent.offset + ent.length
     result += text[last_index:]
     return result
 
@@ -75,19 +75,18 @@ def get_caption_html(message: Update.message.__class__) -> str:
     except Exception:
         return message.caption or ""
 
-# --- Función de reemplazo simple (para textos sin entidades o como fallback) ---
+# --- Funciones de reemplazo ---
 def replace_text_simple(text: str, detect_word: str, replace_word: str) -> str:
     return re.sub(re.escape(detect_word), replace_word, text, flags=re.IGNORECASE)
 
-# --- Función para procesar entidades bold y reemplazar la etiqueta sin formato ---
 def process_text_entities(text: str, entities: list, detect_word: str, replace_word: str):
     new_text = ""
     new_entities = []
     current = 0
     pattern = re.compile('(' + re.escape(detect_word) + ')', re.IGNORECASE)
     for ent in sorted(entities, key=lambda e: e.offset):
-        new_text += text[current: ent.offset]
-        seg = text[ent.offset: ent.offset+ent.length]
+        new_text += text[current:ent.offset]
+        seg = text[ent.offset:ent.offset+ent.length]
         if ent.type == "bold" and detect_word.lower() in seg.lower():
             parts = pattern.split(seg)
             for part in parts:
@@ -106,7 +105,7 @@ def process_text_entities(text: str, entities: list, detect_word: str, replace_w
     new_text += text[current:]
     return new_text, new_entities
 
-# --- Función principal para procesar posts (texto y media groups) ---
+# --- Handler para procesar posts ---
 async def process_posts(update: Update, context: CallbackContext) -> None:
     config = context.bot_data.get("configurations", {}).get(update.message.from_user.id)
     if not config:
@@ -126,7 +125,7 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
         if group_id in context.bot_data["scheduled_album_tasks"]:
             return
         async def process_album():
-            await asyncio.sleep(1)  # Esperar para reunir todos los mensajes del álbum
+            await asyncio.sleep(1)
             album = context.bot_data.pop(group_id, [])
             context.bot_data["scheduled_album_tasks"].pop(group_id, None)
             album.sort(key=lambda m: (m.date, m.message_id))
@@ -277,11 +276,12 @@ def run_secondary_bot(app: Application, loop: asyncio.AbstractEventLoop):
         jq = JobQueue()
         jq.start()
         app.job_queue = jq
-    app.set_my_commands([
+    # Establecer comandos mediante el bot (de forma asíncrona)
+    loop.run_until_complete(app.bot.set_my_commands([
         ("start", "Mostrar menú de comandos"),
         ("iniciar", "Configurar el bot de reemplazo"),
         ("detener", "Detener el bot de reemplazo")
-    ])
+    ]))
     app.run_polling(close_loop=False)
 
 async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -302,9 +302,7 @@ async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFA
 #############################################
 
 def main() -> None:
-    logging.basicConfig(
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-    )
+    logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
     master_app = Application.builder().token(MASTER_TELEGRAM_TOKEN).build()
     if master_app.job_queue is None:
         jq = JobQueue()
@@ -321,4 +319,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
