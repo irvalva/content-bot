@@ -22,6 +22,10 @@ from telegram.ext import (
     JobQueue,
 )
 
+# Definición de constantes para los estados de conversación
+DETECT_WORD, REPLACE_WORD = range(2)
+ADD_BOT_TOKEN, = range(1)
+
 #############################################
 # BOT MAESTRO: CONFIGURACIÓN
 #############################################
@@ -32,7 +36,23 @@ MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reem
 # BOT SECUNDARIO: PROCESAMIENTO DE POSTS
 #############################################
 
-# --- Funciones auxiliares para obtener texto y entidades ---
+# --- Funciones auxiliares para trabajar con texto y entidades ---
+def convert_to_html(text: str, entities: list) -> str:
+    if not entities:
+        return text
+    result = ""
+    last_index = 0
+    for ent in sorted(entities, key=lambda e: e.offset):
+        result += text[last_index:ent.offset]
+        seg = text[ent.offset: ent.offset+ent.length]
+        if ent.type == "bold":
+            result += "<b>" + seg + "</b>"
+        else:
+            result += seg
+        last_index = ent.offset+ent.length
+    result += text[last_index:]
+    return result
+
 def get_message_text_and_entities(message: Update.message.__class__) -> (str, list):
     return message.text or "", message.entities or []
 
@@ -55,40 +75,19 @@ def get_caption_html(message: Update.message.__class__) -> str:
     except Exception:
         return message.caption or ""
 
-def convert_to_html(text: str, entities: list) -> str:
-    """Reconstruye el texto a HTML usando las entidades (aquí, principalmente bold)."""
-    if not entities:
-        return text
-    result = ""
-    last_index = 0
-    for ent in sorted(entities, key=lambda e: e.offset):
-        result += text[last_index:ent.offset]
-        seg = text[ent.offset: ent.offset+ent.length]
-        if ent.type == "bold":
-            result += "<b>" + seg + "</b>"
-        else:
-            result += seg
-        last_index = ent.offset+ent.length
-    result += text[last_index:]
-    return result
-
-# --- Función de reemplazo ---
+# --- Función de reemplazo simple (para textos sin entidades o como fallback) ---
 def replace_text_simple(text: str, detect_word: str, replace_word: str) -> str:
-    """Reemplaza todas las ocurrencias de detect_word (sin límites) por replace_word, insensible a mayúsculas."""
     return re.sub(re.escape(detect_word), replace_word, text, flags=re.IGNORECASE)
 
+# --- Función para procesar entidades bold y reemplazar la etiqueta sin formato ---
 def process_text_entities(text: str, entities: list, detect_word: str, replace_word: str):
-    """
-    Reconstruye el texto y la lista de entidades, reemplazando detect_word por replace_word
-    en las entidades de tipo bold (la parte reemplazada se insertará sin formato).
-    """
     new_text = ""
     new_entities = []
     current = 0
     pattern = re.compile('(' + re.escape(detect_word) + ')', re.IGNORECASE)
     for ent in sorted(entities, key=lambda e: e.offset):
-        new_text += text[current:ent.offset]
-        seg = text[ent.offset:ent.offset+ent.length]
+        new_text += text[current: ent.offset]
+        seg = text[ent.offset: ent.offset+ent.length]
         if ent.type == "bold" and detect_word.lower() in seg.lower():
             parts = pattern.split(seg)
             for part in parts:
@@ -107,18 +106,17 @@ def process_text_entities(text: str, entities: list, detect_word: str, replace_w
     new_text += text[current:]
     return new_text, new_entities
 
-# --- Handler para procesar posts (tanto de texto individual como de media group) ---
+# --- Función principal para procesar posts (texto y media groups) ---
 async def process_posts(update: Update, context: CallbackContext) -> None:
-    # Obtenemos la configuración del usuario (en el bot secundario, por chat)
     config = context.bot_data.get("configurations", {}).get(update.message.from_user.id)
     if not config:
-        return  # No se ha configurado aún, no procesamos
+        return
     detect = config.get("detect")
     replace = config.get("replace")
     if not detect or not replace:
         return
 
-    # --- Procesamiento de álbum (media_group) ---
+    # Procesamiento de álbum (media_group)
     if update.message.media_group_id:
         group_id = update.message.media_group_id
         group = context.bot_data.setdefault(group_id, [])
@@ -128,15 +126,13 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
         if group_id in context.bot_data["scheduled_album_tasks"]:
             return
         async def process_album():
-            await asyncio.sleep(1)  # Espera para que se reúnan todos los mensajes del grupo
+            await asyncio.sleep(1)  # Esperar para reunir todos los mensajes del álbum
             album = context.bot_data.pop(group_id, [])
             context.bot_data["scheduled_album_tasks"].pop(group_id, None)
-            # Ordenamos por fecha y message_id para preservar el orden
             album.sort(key=lambda m: (m.date, m.message_id))
-            # Procesamos el caption (si existe)
             if album[0].caption:
-                original_caption = album[0].caption
-                new_caption = replace_text_simple(original_caption, detect, replace)
+                caption = album[0].caption
+                new_caption = replace_text_simple(caption, detect, replace)
             else:
                 new_caption = None
             media_list = []
@@ -151,12 +147,16 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
                         media_list.append(InputMediaVideo(msg.video.file_id, caption=new_caption, parse_mode="HTML"))
                     else:
                         media_list.append(InputMediaVideo(msg.video.file_id))
-                elif msg.animation:
+                elif msg.audio:
                     if new_caption and msg == album[0]:
-                        media_list.append(InputMediaVideo(msg.animation.file_id, caption=new_caption, parse_mode="HTML"))
+                        media_list.append(InputMediaAudio(msg.audio.file_id, caption=new_caption, parse_mode="HTML"))
                     else:
-                        media_list.append(InputMediaVideo(msg.animation.file_id))
-                # Se pueden añadir otros tipos de media aquí
+                        media_list.append(InputMediaAudio(msg.audio.file_id))
+                elif msg.document:
+                    if new_caption and msg == album[0]:
+                        media_list.append(InputMediaDocument(msg.document.file_id, caption=new_caption, parse_mode="HTML"))
+                    else:
+                        media_list.append(InputMediaDocument(msg.document.file_id))
             if media_list:
                 await context.bot.send_media_group(chat_id=update.message.chat_id, media=media_list)
             for msg in album:
@@ -168,12 +168,11 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
         context.bot_data["scheduled_album_tasks"][group_id] = task
         return
 
-    # --- Procesamiento de mensajes individuales ---
+    # Procesamiento de mensajes individuales
     if update.message.text:
         text, ents = get_message_text_and_entities(update.message)
         if ents:
             new_text, new_entities = process_text_entities(text, ents, detect, replace)
-            # Enviar con entidades (manteniendo el formato)
             await update.message.reply_text(new_text, entities=new_entities)
         else:
             new_text = replace_text_simple(text, detect, replace)
@@ -197,7 +196,6 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
         pass
 
 # --- Handlers de configuración para el Bot Secundario ---
-# Usaremos una conversación para que el usuario configure la etiqueta a detectar y la de reemplazo.
 async def rep_cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Bienvenido al Bot Secundario.\n"
@@ -241,12 +239,10 @@ async def rep_detener_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     else:
         await update.message.reply_text("No hay configuración activa.")
 
-# Handler que procesa todos los posts enviados al bot secundario
 async def rep_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await process_posts(update, context)
 
 def setup_secondary_bot(app: Application) -> None:
-    # Comandos de configuración y control
     app.add_handler(CommandHandler("start", rep_cmd_start))
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("iniciar", rep_iniciar)],
@@ -263,9 +259,6 @@ def setup_secondary_bot(app: Application) -> None:
 #############################################
 # BOT MAESTRO: HANDLERS PARA AGREGAR BOT SECUNDARIO
 #############################################
-
-# Usaremos una conversación en el Bot Maestro para recibir el token del bot secundario.
-ADD_BOT_TOKEN, = range(1)
 
 async def master_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
@@ -328,3 +321,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
