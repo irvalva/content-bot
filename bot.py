@@ -90,7 +90,7 @@ def start_secondary_bot(bot, bot_name):
 
         new_text = message.text.replace(keyword, replacement)
         entities = message.entities if message.entities else []
-        formatted_message = apply_formatting_to_words(new_text, entities)
+        formatted_message = reconstruct_formatted_text(new_text, entities)
 
         try:
             bot.delete_message(message.chat.id, message.message_id)
@@ -104,27 +104,33 @@ def start_secondary_bot(bot, bot_name):
     print(f"🤖 Bot @{bot_name} en funcionamiento...")
     bot.polling(timeout=30, long_polling_timeout=30)
 
-# 🚦 Función para aplicar formato a palabras completas
-def apply_formatting_to_words(text, entities):
-    # Dividir el texto en palabras para aplicar el formato correctamente
-    words = text.split(' ')
+# 🚦 Función para aplicar el formato correcto solo a las palabras originales
+def reconstruct_formatted_text(text, entities):
     formatted_text = ""
+    current_index = 0
 
-    for word in words:
-        formatted_word = html.escape(word)
+    for entity in entities:
+        start, end = entity.offset, entity.offset + entity.length
 
-        # Revisar si la palabra tiene una entidad de formato
-        for entity in entities:
-            if entity.type == 'bold' and word in text[entity.offset:entity.offset + entity.length]:
-                formatted_word = f"<b>{formatted_word}</b>"
-            elif entity.type == 'italic' and word in text[entity.offset:entity.offset + entity.length]:
-                formatted_word = f"<i>{formatted_word}</i>"
-            elif entity.type == 'underline' and word in text[entity.offset:entity.offset + entity.length]:
-                formatted_word = f"<u>{formatted_word}</u>"
-        
-        formatted_text += formatted_word + ' '
+        # Añadir el texto sin formato previo a la entidad
+        formatted_text += html.escape(text[current_index:start])
+        original_text = html.escape(text[start:end])
 
-    return formatted_text.strip()
+        # Aplicar el formato solo a las entidades originales
+        if entity.type == 'bold':
+            formatted_text += f"<b>{original_text}</b>"
+        elif entity.type == 'italic':
+            formatted_text += f"<i>{original_text}</i>"
+        elif entity.type == 'underline':
+            formatted_text += f"<u>{original_text}</u>"
+        else:
+            formatted_text += original_text
+
+        current_index = end
+
+    # Añadir el resto del texto sin formato
+    formatted_text += html.escape(text[current_index:])
+    return formatted_text
 
 print("🤖 Bot Master en funcionamiento...")
 bot_master.polling(timeout=30, long_polling_timeout=30)
