@@ -79,23 +79,48 @@ def start_secondary_bot(bot, bot_name):
         bot_settings['replacement'] = replacement
         bot.reply_to(message, f"✅ *Palabra de reemplazo* configurada: {replacement}\nEl bot está listo para reemplazar automáticamente 🚦")
 
-    # 🔍 Detectar mensajes con la palabra clave y reemplazar
+    # 🔍 Detectar mensajes con la palabra clave y reemplazar conservando el formato
     @bot.message_handler(func=lambda message: bot_settings['keyword'] and bot_settings['keyword'] in message.text)
     def auto_replace(message):
         keyword = bot_settings['keyword']
         replacement = bot_settings['replacement']
         
-        # Crear el nuevo mensaje reemplazando la palabra clave
-        new_message = message.text.replace(keyword, replacement)
+        # Reemplazar la palabra clave en el texto original
+        new_text = message.text.replace(keyword, replacement)
         
-        # Eliminar el mensaje original
+        # Analizar las entidades del mensaje original
+        entities = message.entities or []
+
+        # Ajustar las entidades para mantener el formato
+        new_entities = []
+        offset_diff = len(replacement) - len(keyword)
+
+        for entity in entities:
+            start, end = entity.offset, entity.offset + entity.length
+            
+            if start <= message.text.find(keyword) < end:
+                new_entities.append(telebot.types.MessageEntity(
+                    type=entity.type,
+                    offset=entity.offset,
+                    length=entity.length + offset_diff,
+                    url=entity.url if entity.type == 'text_link' else None
+                ))
+            else:
+                new_entities.append(entity)
+
+        # 🚮 Eliminar el mensaje original
         try:
             bot.delete_message(message.chat.id, message.message_id)
         except Exception as e:
             print(f"⚠️ No se pudo eliminar el mensaje: {e}")
 
-        # Enviar el mensaje reemplazado
-        bot.send_message(message.chat.id, new_message)
+        # Enviar el nuevo mensaje con el formato conservado
+        bot.send_message(
+            message.chat.id, 
+            new_text, 
+            entities=new_entities, 
+            parse_mode='HTML'
+        )
 
     # 🚦 Iniciar el bot secundario
     print(f"🤖 Bot @{bot_name} en funcionamiento...")
