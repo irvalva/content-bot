@@ -4,7 +4,7 @@ from telebot import types
 
 # Token del Bot Master
 MASTER_TOKEN = '7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g'
-bot_master = telebot.TeleBot(MASTER_TOKEN)
+bot_master = telebot.TeleBot(MASTER_TOKEN, parse_mode='MarkdownV2')
 
 # Diccionario para almacenar los bots secundarios en memoria
 connected_bots = {}
@@ -19,7 +19,7 @@ def request_token(message):
 def add_bot(message):
     token = message.text.strip()
     try:
-        new_bot = telebot.TeleBot(token)
+        new_bot = telebot.TeleBot(token, parse_mode='MarkdownV2')
         bot_info = new_bot.get_me()
         bot_name = bot_info.username
 
@@ -85,26 +85,9 @@ def start_secondary_bot(bot, bot_name):
     def auto_replace(message):
         keyword = bot_settings['keyword']
         replacement = bot_settings['replacement']
-        
-        # Reemplazar la palabra clave en el texto original
         new_text = message.text.replace(keyword, replacement)
         
-        # Crear nuevas entidades manteniendo el formato original
-        new_entities = []
-        for entity in message.entities or []:
-            # Ajustar las posiciones de las entidades si incluyen la palabra clave
-            start, end = entity.offset, entity.offset + entity.length
-            if keyword in message.text[start:end]:
-                # Calcular la nueva longitud con el reemplazo
-                new_length = len(replacement)
-                new_entities.append(types.MessageEntity(
-                    type=entity.type,
-                    offset=start,
-                    length=new_length,
-                    url=entity.url if entity.type == 'text_link' else None
-                ))
-            else:
-                new_entities.append(entity)
+        formatted_text = escape_markdown(new_text, message.entities or [])
         
         # 🚮 Eliminar el mensaje original
         try:
@@ -113,18 +96,31 @@ def start_secondary_bot(bot, bot_name):
             print(f"⚠️ No se pudo eliminar el mensaje: {e}")
 
         # Enviar el mensaje reemplazado con el formato conservado
-        bot.send_message(
-            message.chat.id, 
-            new_text, 
-            entities=new_entities,
-            parse_mode='HTML'
-        )
+        bot.send_message(message.chat.id, formatted_text, parse_mode='MarkdownV2')
 
-    # 🚦 Iniciar el bot secundario
-    print(f"🤖 Bot @{bot_name} en funcionamiento...")
-    bot.polling()
+# 🛠️ Función para escapar caracteres especiales en MarkdownV2
+def escape_markdown(text, entities):
+    md_text = text
+    for entity in entities:
+        start, end = entity.offset, entity.offset + entity.length
+        original_text = text[start:end]
+        if entity.type == 'bold':
+            md_text = md_text.replace(original_text, f"*{original_text}*")
+        elif entity.type == 'italic':
+            md_text = md_text.replace(original_text, f"_{original_text}_")
+        elif entity.type == 'underline':
+            md_text = md_text.replace(original_text, f"__{original_text}__")
+        elif entity.type == 'strikethrough':
+            md_text = md_text.replace(original_text, f"~{original_text}~")
+        elif entity.type == 'code':
+            md_text = md_text.replace(original_text, f"`{original_text}`")
+        elif entity.type == 'pre':
+            md_text = md_text.replace(original_text, f"```{original_text}```")
+        elif entity.type == 'text_link':
+            md_text = md_text.replace(original_text, f"[{original_text}]({entity.url})")
+    return telebot.util.escape_markdown(md_text, version=2)
 
-# 🚦 Iniciar el Bot Master
+# 🚦 Iniciar el bot secundario
 print("🤖 Bot Master en funcionamiento...")
 bot_master.polling()
 
