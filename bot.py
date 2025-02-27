@@ -48,7 +48,6 @@ def start_secondary_bot(bot, bot_name):
     def greet(message):
         print("🟢 Comando /start recibido en el bot secundario")
         text = "👋 ¡Hola! Soy tu bot configurable 😊\nDime la <b>palabra clave</b> que debo detectar (incluye @):"
-        # No se usa html.escape aquí, ya que es solo una configuración simple
         bot.reply_to(message, text, parse_mode='HTML')
         bot.register_next_step_handler(message, set_keyword)
 
@@ -89,12 +88,9 @@ def start_secondary_bot(bot, bot_name):
         print(f"🔍 Mensaje recibido: {message.text}")
         print(f"🛠️ Reemplazando '{keyword}' con '{replacement}'")
 
-        # Reemplazar solo el texto, manteniendo las entidades de formato
         new_text = message.text.replace(keyword, replacement)
-
-        # Obtener las entidades originales para conservar el formato
         entities = message.entities if message.entities else []
-        formatted_message = reconstruct_formatted_text(new_text, entities)
+        formatted_message = reconstruct_formatted_text(new_text, entities, keyword, replacement)
 
         try:
             bot.delete_message(message.chat.id, message.message_id)
@@ -109,9 +105,17 @@ def start_secondary_bot(bot, bot_name):
     bot.polling(timeout=30, long_polling_timeout=30)
 
 # 🚦 Función para reconstruir el texto manteniendo el formato original
-def reconstruct_formatted_text(text, entities):
+def reconstruct_formatted_text(text, entities, keyword, replacement):
+    offset_diff = len(replacement) - len(keyword)
+    
     for entity in reversed(entities):
         start, end = entity.offset, entity.offset + entity.length
+        
+        # Ajustar el offset si la palabra clave afectó la longitud del texto
+        if start >= text.find(replacement):
+            start += offset_diff
+            end += offset_diff
+        
         original_text = html.escape(text[start:end])
         
         if entity.type == 'bold':
@@ -135,4 +139,3 @@ def reconstruct_formatted_text(text, entities):
 
 print("🤖 Bot Master en funcionamiento...")
 bot_master.polling(timeout=30, long_polling_timeout=30)
-
