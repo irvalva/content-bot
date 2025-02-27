@@ -9,6 +9,7 @@ from telegram import (
     InputMediaVideo,
     InputMediaAudio,
     InputMediaDocument,
+    MessageEntity,
 )
 from telegram.ext import (
     Application,
@@ -28,31 +29,101 @@ from telegram.ext import (
 MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reemplaza con el token real
 
 #############################################
-# Funciones auxiliares para obtener texto
+# Funciones auxiliares para trabajar con entidades
 #############################################
 
-def get_message_text(message: Update.message.__class__) -> str:
-    return message.text or ""
+def convert_to_html(text: str, entities: list) -> str:
+    """
+    Reconstruye el texto a HTML aplicando las entidades (solo bold en este ejemplo).
+    Si no hay entidades, retorna el texto sin cambios.
+    """
+    if not entities:
+        return text
+    result = ""
+    last_index = 0
+    for ent in sorted(entities, key=lambda e: e.offset):
+        result += text[last_index:ent.offset]
+        seg = text[ent.offset: ent.offset+ent.length]
+        if ent.type == "bold":
+            result += "<b>" + seg + "</b>"
+        else:
+            result += seg
+        last_index = ent.offset+ent.length
+    result += text[last_index:]
+    return result
 
-def get_caption_text(message: Update.message.__class__) -> str:
-    return message.caption or ""
+def get_message_text_and_entities(message: Update.message.__class__) -> (str, list):
+    return message.text or "", message.entities or []
+
+def get_caption_text_and_entities(message: Update.message.__class__) -> (str, list):
+    return message.caption or "", message.caption_entities or []
+
+def get_message_html(message: Update.message.__class__) -> str:
+    if message.entities:
+        return convert_to_html(message.text, message.entities)
+    try:
+        return message.to_html()
+    except Exception:
+        return message.text or ""
+
+def get_caption_html(message: Update.message.__class__) -> str:
+    if message.caption and message.caption_entities:
+        return convert_to_html(message.caption, message.caption_entities)
+    try:
+        return message.caption_html
+    except Exception:
+        return message.caption or ""
 
 #############################################
-# Funciones de reemplazo (método simple)
+# Función para procesar el texto con entidades
 #############################################
+
+def process_text_entities(text: str, entities: list, detect_word: str, replace_word: str):
+    """
+    Reconstruye el texto y la lista de entidades, reemplazando todas las ocurrencias
+    (dentro de entidades bold) de detect_word por replace_word sin formato bold,
+    mientras se conserva el formato de las demás partes.
+    
+    Para entidades que no sean bold o que no contengan detect_word se mantienen sin cambios
+    (ajustando sus offsets según se vaya construyendo el nuevo texto).
+    """
+    new_text = ""
+    new_entities = []
+    current = 0
+    # Usamos el siguiente patrón simple (sin límites) para detectar la etiqueta en el segmento
+    pattern = re.compile('(' + re.escape(detect_word) + ')', re.IGNORECASE)
+    for ent in sorted(entities, key=lambda e: e.offset):
+        # Añadimos el texto que no está en esta entidad
+        new_text += text[current:ent.offset]
+        seg = text[ent.offset: ent.offset+ent.length]
+        if ent.type == "bold" and detect_word.lower() in seg.lower():
+            # Dividimos el segmento en partes (manteniendo la coincidencia)
+            parts = pattern.split(seg)
+            for part in parts:
+                if part.lower() == detect_word.lower():
+                    # Inserta la nueva etiqueta sin bold
+                    new_text += replace_word
+                else:
+                    if part:
+                        start = len(new_text)
+                        new_text += part
+                        new_entities.append(MessageEntity(type="bold", offset=start, length=len(part)))
+        else:
+            start = len(new_text)
+            new_text += seg
+            # Reinsertamos la entidad tal como estaba (ajustando offset y longitud)
+            new_entities.append(MessageEntity(type=ent.type, offset=start, length=len(seg)))
+        current = ent.offset+ent.length
+    new_text += text[current:]
+    return new_text, new_entities
 
 def replace_text_simple(text: str, detect_word: str, replace_word: str) -> str:
-    """
-    Reemplaza todas las ocurrencias de detect_word (sin límites) por replace_word,
-    de forma insensible a mayúsculas. Esta versión se aplica sobre el texto puro.
-    """
     return re.sub(re.escape(detect_word), replace_word, text, flags=re.IGNORECASE)
 
 #############################################
 # Handlers del Bot de Reemplazo
 #############################################
 
-# Estados para la conversación
 DETECT_WORD, REPLACE_WORD = range(2)
 
 async def rep_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -76,7 +147,6 @@ async def rep_iniciar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
 async def rep_detect_word(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     chat_id = update.effective_chat.id
-    # Se espera que el usuario ingrese exactamente la etiqueta (incluyendo el @)
     text = update.message.text.strip()
     context.bot_data["configurations"][chat_id]["detect_word"] = text
     await update.message.reply_text("¿Con qué etiqueta (ej. @CrecimientoConSofia) deseas reemplazarla?")
@@ -107,7 +177,7 @@ async def rep_detener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def rep_process_individual_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     configs = context.bot_data.get("configurations", {})
-    # Si no hay configuración activa, se reenvía el mensaje original tal cual
+    # Si no hay configuración activa, reenviamos el mensaje original sin cambios.
     if chat_id not in configs or not configs[chat_id].get("active", False):
         if update.message.text:
             await context.bot.send_message(chat_id=chat_id, text=update.message.text, parse_mode="HTML")
@@ -125,45 +195,25 @@ async def rep_process_individual_message(update: Update, context: ContextTypes.D
     replace_word_val = configs[chat_id]["replace_word"]
 
     if update.message.text:
-        text = get_message_text(update.message)
-        new_text = replace_text_simple(text, detect_word, replace_word_val)
-        await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="HTML")
+        text, ents = get_message_text_and_entities(update.message)
+        if ents:
+            new_text, new_entities = process_text_entities(text, ents, detect_word, replace_word_val)
+            await context.bot.send_message(chat_id=chat_id, text=new_text, entities=new_entities)
+        else:
+            new_text = replace_text_simple(text, detect_word, replace_word_val)
+            await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="HTML")
         try:
             await update.message.delete()
         except Exception as e:
             logging.error("Error al borrar mensaje: %s", e)
     elif update.message.caption:
-        text = get_caption_text(update.message)
-        new_text = replace_text_simple(text, detect_word, replace_word_val)
-        # Si el mensaje es de foto, video, etc., se reenvía conservando el media
-        if update.message.photo:
-            await context.bot.send_photo(
-                chat_id=chat_id,
-                photo=update.message.photo[-1].file_id,
-                caption=new_text,
-                parse_mode="HTML"
-            )
-        elif update.message.video:
-            await context.bot.send_video(
-                chat_id=chat_id,
-                video=update.message.video.file_id,
-                caption=new_text,
-                parse_mode="HTML"
-            )
-        elif update.message.audio:
-            await context.bot.send_audio(
-                chat_id=chat_id,
-                audio=update.message.audio.file_id,
-                caption=new_text,
-                parse_mode="HTML"
-            )
-        elif update.message.document:
-            await context.bot.send_document(
-                chat_id=chat_id,
-                document=update.message.document.file_id,
-                caption=new_text,
-                parse_mode="HTML"
-            )
+        text, ents = get_caption_text_and_entities(update.message)
+        if ents:
+            new_text, new_entities = process_text_entities(text, ents, detect_word, replace_word_val)
+            await context.bot.send_message(chat_id=chat_id, text=new_text, entities=new_entities)
+        else:
+            new_text = replace_text_simple(text, detect_word, replace_word_val)
+            await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="HTML")
         try:
             await update.message.delete()
         except Exception as e:
@@ -186,7 +236,6 @@ async def rep_process_media_group(context: CallbackContext) -> None:
     messages.sort(key=lambda m: (m.date, m.message_id))
     chat_id = messages[0].chat.id
     configs = context.bot_data.get("configurations", {})
-    # Si no hay configuración activa, reenviamos sin cambios
     if chat_id not in configs or not configs[chat_id].get("active", False):
         if messages[0].caption:
             caption = messages[0].caption
@@ -211,8 +260,11 @@ async def rep_process_media_group(context: CallbackContext) -> None:
 
     processed_caption = ""
     if messages[0].caption:
-        text = get_caption_text(messages[0])
-        processed_caption = replace_text_simple(text, detect_word, replace_word_val)
+        text, ents = get_caption_text_and_entities(messages[0])
+        if ents:
+            processed_caption, _ = process_text_entities(text, ents, detect_word, replace_word_val)
+        else:
+            processed_caption = replace_text_simple(text, detect_word, replace_word_val)
 
     media_list = []
     for i, m in enumerate(messages):
@@ -241,9 +293,13 @@ async def rep_process_media_group(context: CallbackContext) -> None:
                 media = InputMediaDocument(media=m.document.file_id)
             media_list.append(media)
         else:
-            text = get_message_text(m)
-            new_text = replace_text_simple(text, detect_word, replace_word_val)
-            await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="HTML")
+            text, ents = get_message_text_and_entities(m)
+            if ents:
+                new_text, new_entities = process_text_entities(text, ents, detect_word, replace_word_val)
+                await context.bot.send_message(chat_id=chat_id, text=new_text, entities=new_entities)
+            else:
+                new_text = replace_text_simple(text, detect_word, replace_word_val)
+                await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="HTML")
     if media_list:
         await context.bot.send_media_group(chat_id=chat_id, media=media_list)
     for m in messages:
@@ -341,3 +397,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
