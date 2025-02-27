@@ -1,5 +1,6 @@
 import telebot
 import threading
+from telebot import types
 
 # Token del Bot Master
 MASTER_TOKEN = '7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g'
@@ -88,37 +89,34 @@ def start_secondary_bot(bot, bot_name):
         # Reemplazar la palabra clave en el texto original
         new_text = message.text.replace(keyword, replacement)
         
-        # Analizar las entidades del mensaje original
-        entities = message.entities or []
-
-        # Ajustar las entidades para mantener el formato
+        # Crear nuevas entidades manteniendo el formato original
         new_entities = []
-        offset_diff = len(replacement) - len(keyword)
-
-        for entity in entities:
+        for entity in message.entities or []:
+            # Ajustar las posiciones de las entidades si incluyen la palabra clave
             start, end = entity.offset, entity.offset + entity.length
-            
-            if start <= message.text.find(keyword) < end:
-                new_entities.append(telebot.types.MessageEntity(
+            if keyword in message.text[start:end]:
+                # Calcular la nueva longitud con el reemplazo
+                new_length = len(replacement)
+                new_entities.append(types.MessageEntity(
                     type=entity.type,
-                    offset=entity.offset,
-                    length=entity.length + offset_diff,
+                    offset=start,
+                    length=new_length,
                     url=entity.url if entity.type == 'text_link' else None
                 ))
             else:
                 new_entities.append(entity)
-
+        
         # 🚮 Eliminar el mensaje original
         try:
             bot.delete_message(message.chat.id, message.message_id)
         except Exception as e:
             print(f"⚠️ No se pudo eliminar el mensaje: {e}")
 
-        # Enviar el nuevo mensaje con el formato conservado
+        # Enviar el mensaje reemplazado con el formato conservado
         bot.send_message(
             message.chat.id, 
             new_text, 
-            entities=new_entities, 
+            entities=new_entities,
             parse_mode='HTML'
         )
 
