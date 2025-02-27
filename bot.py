@@ -1,7 +1,6 @@
 import telebot
 import threading
 from telebot import types
-from telebot.util import escape_markdown
 
 # Token del Bot Master
 MASTER_TOKEN = '7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g'
@@ -85,7 +84,7 @@ def start_secondary_bot(bot, bot_name):
         replacement = bot_settings['replacement']
         new_text = message.text.replace(keyword, replacement)
         
-        formatted_text = escape_markdown(new_text, version=2)
+        formatted_text = escape_markdown(new_text)
         
         # 🚮 Eliminar el mensaje original
         try:
@@ -95,6 +94,14 @@ def start_secondary_bot(bot, bot_name):
 
         # Enviar el mensaje reemplazado con el formato conservado
         bot.send_message(message.chat.id, formatted_text, parse_mode='MarkdownV2')
+
+# 🚦 Función para escapar caracteres especiales en MarkdownV2
+def escape_markdown(text: str) -> str:
+    """
+    Escapa los caracteres especiales para MarkdownV2.
+    """
+    escape_chars = r"\_*[]()~`>#+-=|{}.!"
+    return "".join(f"\\{char}" if char in escape_chars else char for char in text)
 
 # 🚦 Iniciar el bot secundario
 print("🤖 Bot Master en funcionamiento...")
