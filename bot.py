@@ -19,7 +19,7 @@ def request_token(message):
 def add_bot(message):
     token = message.text.strip()
     try:
-        new_bot = telebot.TeleBot(token, parse_mode='HTML')
+        new_bot = telebot.TeleBot(token, parse_mode=None)  # Sin establecer parse_mode inicialmente
         bot_info = new_bot.get_me()
         bot_name = bot_info.username
 
@@ -47,8 +47,8 @@ def start_secondary_bot(bot, bot_name):
     @bot.message_handler(commands=['start'])
     def greet(message):
         print("🟢 Comando /start recibido en el bot secundario")
-        text = "👋 ¡Hola! Soy tu bot configurable 😊\nDime la <b>palabra clave</b> que debo detectar (incluye @):"
-        bot.reply_to(message, text, parse_mode='HTML')
+        text = "👋 ¡Hola! Soy tu bot configurable 😊\nDime la *palabra clave* que debo detectar (incluye @):"
+        bot.reply_to(message, text, parse_mode='MarkdownV2')
         bot.register_next_step_handler(message, set_keyword)
 
     def set_keyword(message):
@@ -60,8 +60,8 @@ def start_secondary_bot(bot, bot_name):
         bot_settings['keyword'] = keyword
         print(f"✅ Palabra clave guardada: {keyword}")
         
-        response_text = f"✅ <b>Palabra clave</b> configurada: {html.escape(keyword)}\nAhora dime la <b>palabra de reemplazo</b> (incluye @):"
-        bot.reply_to(message, response_text, parse_mode='HTML')
+        response_text = f"✅ *Palabra clave* configurada: {keyword}\nAhora dime la *palabra de reemplazo* (incluye @):"
+        bot.reply_to(message, response_text, parse_mode='MarkdownV2')
         bot.register_next_step_handler(message, set_replacement)
 
     def set_replacement(message):
@@ -73,8 +73,8 @@ def start_secondary_bot(bot, bot_name):
         bot_settings['replacement'] = replacement
         print(f"✅ Palabra de reemplazo guardada: {replacement}")
         
-        response_text = f"✅ <b>Palabra de reemplazo</b> configurada: {html.escape(replacement)}\nEl bot está listo para reemplazar automáticamente 🚦"
-        bot.reply_to(message, response_text, parse_mode='HTML')
+        response_text = f"✅ *Palabra de reemplazo* configurada: {replacement}\nEl bot está listo para reemplazar automáticamente 🚦"
+        bot.reply_to(message, response_text, parse_mode='MarkdownV2')
 
     @bot.message_handler(func=lambda message: bot_settings['keyword'] and bot_settings['keyword'] in message.text)
     def auto_replace(message):
@@ -87,18 +87,28 @@ def start_secondary_bot(bot, bot_name):
         
         print(f"🔍 Mensaje recibido: {message.text}")
         print(f"🛠️ Reemplazando '{keyword}' con '{replacement}'")
-        
+
+        # Reemplazar la palabra clave en el mensaje original
         new_text = message.text.replace(keyword, replacement)
-        formatted_text = html.escape(new_text)
-        
+
+        # Detectar el tipo de formateo original
+        parse_mode = None
+        if message.entities:
+            if any(ent.type in ['bold', 'italic', 'text_link', 'pre', 'code'] for ent in message.entities):
+                parse_mode = 'MarkdownV2'
+        elif '<b>' in message.text or '<i>' in message.text or '&lt;' in message.text:
+            parse_mode = 'HTML'
+
+        # Eliminar el mensaje original
         try:
             bot.delete_message(message.chat.id, message.message_id)
             print("🗑️ Mensaje original eliminado correctamente")
         except Exception as e:
             print(f"⚠️ No se pudo eliminar el mensaje: {e}")
 
-        bot.send_message(message.chat.id, formatted_text, parse_mode='HTML')
-        print(f"📤 Mensaje enviado: {formatted_text}")
+        # Enviar el mensaje reemplazado manteniendo el mismo formato original
+        bot.send_message(message.chat.id, new_text, parse_mode=parse_mode)
+        print(f"📤 Mensaje enviado con formato {parse_mode}: {new_text}")
 
     print(f"🤖 Bot @{bot_name} en funcionamiento...")
     bot.polling(timeout=30, long_polling_timeout=30)
