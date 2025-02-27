@@ -88,6 +88,7 @@ def start_secondary_bot(bot, bot_name):
         print(f"🔍 Mensaje recibido: {message.text}")
         print(f"🛠️ Reemplazando '{keyword}' con '{replacement}'")
 
+        # Reemplazar solo el texto, manteniendo las entidades de formato
         new_text = message.text.replace(keyword, replacement)
         entities = message.entities if message.entities else []
         formatted_message = reconstruct_formatted_text(new_text, entities, keyword, replacement)
@@ -104,20 +105,20 @@ def start_secondary_bot(bot, bot_name):
     print(f"🤖 Bot @{bot_name} en funcionamiento...")
     bot.polling(timeout=30, long_polling_timeout=30)
 
-# 🚦 Función para reconstruir el texto manteniendo el formato original
+# 🚦 Función para reconstruir el texto manteniendo el formato original sin cortar palabras
 def reconstruct_formatted_text(text, entities, keyword, replacement):
     offset_diff = len(replacement) - len(keyword)
     
     for entity in reversed(entities):
         start, end = entity.offset, entity.offset + entity.length
         
-        # Ajustar el offset si la palabra clave afectó la longitud del texto
+        # Ajustar los índices si la entidad está después de la palabra reemplazada
         if start >= text.find(replacement):
             start += offset_diff
             end += offset_diff
-        
+
         original_text = html.escape(text[start:end])
-        
+
         if entity.type == 'bold':
             formatted_text = f"<b>{original_text}</b>"
         elif entity.type == 'italic':
