@@ -22,7 +22,7 @@ from telegram.ext import (
     JobQueue,
 )
 
-# Definición de constantes para los estados de conversación
+# Constantes para estados de conversación
 DETECT_WORD, REPLACE_WORD = range(2)
 ADD_BOT_TOKEN, = range(1)
 
@@ -36,7 +36,7 @@ MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reem
 # BOT SECUNDARIO: PROCESAMIENTO DE POSTS
 #############################################
 
-# --- Funciones auxiliares para trabajar con texto y entidades ---
+# Funciones auxiliares para obtener texto y entidades
 def convert_to_html(text: str, entities: list) -> str:
     if not entities:
         return text
@@ -44,12 +44,12 @@ def convert_to_html(text: str, entities: list) -> str:
     last_index = 0
     for ent in sorted(entities, key=lambda e: e.offset):
         result += text[last_index:ent.offset]
-        seg = text[ent.offset: ent.offset + ent.length]
+        seg = text[ent.offset: ent.offset+ent.length]
         if ent.type == "bold":
             result += "<b>" + seg + "</b>"
         else:
             result += seg
-        last_index = ent.offset + ent.length
+        last_index = ent.offset+ent.length
     result += text[last_index:]
     return result
 
@@ -75,18 +75,19 @@ def get_caption_html(message: Update.message.__class__) -> str:
     except Exception:
         return message.caption or ""
 
-# --- Funciones de reemplazo ---
+# Función de reemplazo simple
 def replace_text_simple(text: str, detect_word: str, replace_word: str) -> str:
     return re.sub(re.escape(detect_word), replace_word, text, flags=re.IGNORECASE)
 
+# Función para procesar entidades bold y reemplazar la etiqueta sin bold
 def process_text_entities(text: str, entities: list, detect_word: str, replace_word: str):
     new_text = ""
     new_entities = []
     current = 0
     pattern = re.compile('(' + re.escape(detect_word) + ')', re.IGNORECASE)
     for ent in sorted(entities, key=lambda e: e.offset):
-        new_text += text[current:ent.offset]
-        seg = text[ent.offset:ent.offset+ent.length]
+        new_text += text[current: ent.offset]
+        seg = text[ent.offset: ent.offset+ent.length]
         if ent.type == "bold" and detect_word.lower() in seg.lower():
             parts = pattern.split(seg)
             for part in parts:
@@ -105,7 +106,7 @@ def process_text_entities(text: str, entities: list, detect_word: str, replace_w
     new_text += text[current:]
     return new_text, new_entities
 
-# --- Handler para procesar posts ---
+# Función principal para procesar posts
 async def process_posts(update: Update, context: CallbackContext) -> None:
     config = context.bot_data.get("configurations", {}).get(update.message.from_user.id)
     if not config:
@@ -194,7 +195,7 @@ async def process_posts(update: Update, context: CallbackContext) -> None:
     except Exception:
         pass
 
-# --- Handlers de configuración para el Bot Secundario ---
+# Handlers de configuración para el Bot Secundario
 async def rep_cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Bienvenido al Bot Secundario.\n"
@@ -272,11 +273,14 @@ async def master_addbot_start(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 def run_secondary_bot(app: Application, loop: asyncio.AbstractEventLoop):
     asyncio.set_event_loop(loop)
+    # Parchar el registro de señales en este loop
+    loop.add_signal_handler = lambda sig, callback, *args, **kwargs: None
+    if hasattr(loop, "_add_signal_handler"):
+        loop._add_signal_handler = lambda sig, callback, *args, **kwargs: None
     if app.job_queue is None:
         jq = JobQueue()
         jq.start()
         app.job_queue = jq
-    # Establecer comandos mediante el bot (de forma asíncrona)
     loop.run_until_complete(app.bot.set_my_commands([
         ("start", "Mostrar menú de comandos"),
         ("iniciar", "Configurar el bot de reemplazo"),
@@ -302,7 +306,9 @@ async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFA
 #############################################
 
 def main() -> None:
-    logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+    logging.basicConfig(
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    )
     master_app = Application.builder().token(MASTER_TELEGRAM_TOKEN).build()
     if master_app.job_queue is None:
         jq = JobQueue()
@@ -319,3 +325,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
