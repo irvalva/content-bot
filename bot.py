@@ -39,12 +39,67 @@ def add_bot(message):
 
 # 🚦 Función para iniciar el bot secundario
 def start_secondary_bot(bot, bot_name):
+    # Almacenamiento dinámico de la palabra clave y la palabra de reemplazo
+    bot_settings = {
+        'keyword': None,
+        'replacement': None
+    }
+
     @bot.message_handler(commands=['start'])
     def greet(message):
-        # ✅ Escapar caracteres especiales con MarkdownV2
+        print("🟢 Comando /start recibido en el bot secundario")
         text = "👋 ¡Hola! Soy tu bot configurable 😊\nDime la *palabra clave* que debo detectar (incluye @):"
         escaped_text = escape_markdown(text)
         bot.reply_to(message, escaped_text, parse_mode='MarkdownV2')
+        bot.register_next_step_handler(message, set_keyword)
+
+    def set_keyword(message):
+        keyword = message.text.strip()
+        if '@' not in keyword:
+            bot.reply_to(message, "❌ La palabra clave debe incluir el símbolo *@*. Inténtalo de nuevo con /start")
+            return
+        
+        bot_settings['keyword'] = keyword
+        print(f"✅ Palabra clave guardada: {keyword}")
+        bot.reply_to(message, f"✅ *Palabra clave* configurada: {escape_markdown(keyword)}\nAhora dime la *palabra de reemplazo* (incluye @):")
+        bot.register_next_step_handler(message, set_replacement)
+
+    def set_replacement(message):
+        replacement = message.text.strip()
+        if '@' not in replacement:
+            bot.reply_to(message, "❌ La palabra de reemplazo debe incluir el símbolo *@*. Inténtalo de nuevo con /start")
+            return
+        
+        bot_settings['replacement'] = replacement
+        print(f"✅ Palabra de reemplazo guardada: {replacement}")
+        bot.reply_to(message, f"✅ *Palabra de reemplazo* configurada: {escape_markdown(replacement)}\nEl bot está listo para reemplazar automáticamente 🚦")
+
+    # 🔍 Detectar mensajes con la palabra clave y reemplazar conservando el formato
+    @bot.message_handler(func=lambda message: bot_settings['keyword'] and bot_settings['keyword'] in message.text)
+    def auto_replace(message):
+        keyword = bot_settings['keyword']
+        replacement = bot_settings['replacement']
+        
+        if not keyword or not replacement:
+            print("⚠️ No se ha configurado la palabra clave o el reemplazo.")
+            return
+        
+        print(f"🔍 Mensaje recibido: {message.text}")
+        print(f"🛠️ Reemplazando '{keyword}' con '{replacement}'")
+        
+        new_text = message.text.replace(keyword, replacement)
+        formatted_text = escape_markdown(new_text)
+        
+        # 🚮 Eliminar el mensaje original
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+            print("🗑️ Mensaje original eliminado correctamente")
+        except Exception as e:
+            print(f"⚠️ No se pudo eliminar el mensaje: {e}")
+
+        # Enviar el mensaje reemplazado con el formato conservado
+        bot.send_message(message.chat.id, formatted_text, parse_mode='MarkdownV2')
+        print(f"📤 Mensaje enviado: {formatted_text}")
 
     # 🚦 Iniciar el bot secundario con timeout prolongado
     print(f"🤖 Bot @{bot_name} en funcionamiento...")
