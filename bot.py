@@ -19,7 +19,7 @@ def request_token(message):
 def add_bot(message):
     token = message.text.strip()
     try:
-        new_bot = telebot.TeleBot(token, parse_mode='MarkdownV2')
+        new_bot = telebot.TeleBot(token, parse_mode='HTML')
         bot_info = new_bot.get_me()
         bot_name = bot_info.username
 
@@ -48,43 +48,60 @@ def start_secondary_bot(bot, bot_name):
     @bot.message_handler(commands=['start'])
     def greet(message):
         print("🟢 Comando /start recibido en el bot secundario")
-        text = "👋 ¡Hola! Soy tu bot configurable 😊\nDime la *palabra clave* que debo detectar (incluye @):"
-        escaped_text = escape_markdown(text)
-        bot.reply_to(message, escaped_text, parse_mode='MarkdownV2')
+        text = "👋 ¡Hola! Soy tu bot configurable 😊<br>Dime la <b>palabra clave</b> que debo detectar (incluye @):"
+        bot.reply_to(message, text, parse_mode='HTML')
         bot.register_next_step_handler(message, set_keyword)
 
     def set_keyword(message):
         keyword = message.text.strip()
         if '@' not in keyword:
-            bot.reply_to(message, "❌ La palabra clave debe incluir el símbolo *@*. Inténtalo de nuevo con /start")
+            bot.reply_to(message, "❌ La palabra clave debe incluir el símbolo @. Inténtalo de nuevo con /start")
             return
         
         bot_settings['keyword'] = keyword
         print(f"✅ Palabra clave guardada: {keyword}")
-        bot.reply_to(message, f"✅ *Palabra clave* configurada: {escape_markdown(keyword)}\nAhora dime la *palabra de reemplazo* (incluye @):", parse_mode='MarkdownV2')
+        bot.reply_to(message, f"✅ <b>Palabra clave</b> configurada: {keyword}<br>Ahora dime la <b>palabra de reemplazo</b> (incluye @):", parse_mode='HTML')
         bot.register_next_step_handler(message, set_replacement)
 
     def set_replacement(message):
         replacement = message.text.strip()
         if '@' not in replacement:
-            bot.reply_to(message, "❌ La palabra de reemplazo debe incluir el símbolo *@*. Inténtalo de nuevo con /start")
+            bot.reply_to(message, "❌ La palabra de reemplazo debe incluir el símbolo @. Inténtalo de nuevo con /start")
             return
         
         bot_settings['replacement'] = replacement
         print(f"✅ Palabra de reemplazo guardada: {replacement}")
-        bot.reply_to(message, f"✅ *Palabra de reemplazo* configurada: {escape_markdown(replacement)}\nEl bot está listo para reemplazar automáticamente 🚦", parse_mode='MarkdownV2')
+        bot.reply_to(message, f"✅ <b>Palabra de reemplazo</b> configurada: {replacement}<br>El bot está listo para reemplazar automáticamente 🚦", parse_mode='HTML')
+
+    # 🔍 Detectar mensajes con la palabra clave y reemplazar conservando el formato HTML
+    @bot.message_handler(func=lambda message: bot_settings['keyword'] and bot_settings['keyword'] in message.text)
+    def auto_replace(message):
+        keyword = bot_settings['keyword']
+        replacement = bot_settings['replacement']
+        
+        if not keyword or not replacement:
+            print("⚠️ No se ha configurado la palabra clave o el reemplazo.")
+            return
+        
+        print(f"🔍 Mensaje recibido: {message.text}")
+        print(f"🛠️ Reemplazando '{keyword}' con '{replacement}'")
+        
+        new_text = message.text.replace(keyword, replacement)
+        
+        # 🚮 Eliminar el mensaje original
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+            print("🗑️ Mensaje original eliminado correctamente")
+        except Exception as e:
+            print(f"⚠️ No se pudo eliminar el mensaje: {e}")
+
+        # Enviar el mensaje reemplazado con el formato HTML conservado
+        bot.send_message(message.chat.id, new_text, parse_mode='HTML')
+        print(f"📤 Mensaje enviado: {new_text}")
 
     # 🚦 Iniciar el bot secundario con timeout prolongado
     print(f"🤖 Bot @{bot_name} en funcionamiento...")
     bot.polling(timeout=30, long_polling_timeout=30)
-
-# 🚦 Función para escapar caracteres especiales en MarkdownV2
-def escape_markdown(text: str) -> str:
-    """
-    Escapa los caracteres especiales para MarkdownV2.
-    """
-    escape_chars = r"_*[]()~`>#+-=|{}.!"
-    return ''.join(f'\\{char}' if char in escape_chars else char for char in text)
 
 # 🚦 Iniciar el Bot Master
 print("🤖 Bot Master en funcionamiento...")
