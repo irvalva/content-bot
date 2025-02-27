@@ -1,7 +1,5 @@
 import telebot
 import threading
-from telebot import types
-from telebot.util import escape_markdown
 
 # Token del Bot Master
 MASTER_TOKEN = '7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g'
@@ -40,7 +38,6 @@ def add_bot(message):
 
 # 🚦 Función para iniciar el bot secundario
 def start_secondary_bot(bot, bot_name):
-    # Almacenamiento dinámico de la palabra clave y la palabra de reemplazo
     bot_settings = {
         'keyword': None,
         'replacement': None
@@ -50,7 +47,7 @@ def start_secondary_bot(bot, bot_name):
     def greet(message):
         print("🟢 Comando /start recibido en el bot secundario")
         text = "👋 ¡Hola! Soy tu bot configurable 😊\nDime la *palabra clave* que debo detectar (incluye @):"
-        escaped_text = escape_markdown(text, version=2)
+        escaped_text = escape_markdown(text)
         bot.reply_to(message, escaped_text, parse_mode='MarkdownV2')
         bot.register_next_step_handler(message, set_keyword)
 
@@ -62,7 +59,7 @@ def start_secondary_bot(bot, bot_name):
         
         bot_settings['keyword'] = keyword
         print(f"✅ Palabra clave guardada: {keyword}")
-        response_text = f"✅ *Palabra clave* configurada: {escape_markdown(keyword, version=2)}\nAhora dime la *palabra de reemplazo* (incluye @):"
+        response_text = f"✅ *Palabra clave* configurada: {escape_markdown(keyword)}\nAhora dime la *palabra de reemplazo* (incluye @):"
         bot.reply_to(message, response_text, parse_mode='MarkdownV2')
         bot.register_next_step_handler(message, set_replacement)
 
@@ -74,10 +71,9 @@ def start_secondary_bot(bot, bot_name):
         
         bot_settings['replacement'] = replacement
         print(f"✅ Palabra de reemplazo guardada: {replacement}")
-        response_text = f"✅ *Palabra de reemplazo* configurada: {escape_markdown(replacement, version=2)}\nEl bot está listo para reemplazar automáticamente 🚦"
+        response_text = f"✅ *Palabra de reemplazo* configurada: {escape_markdown(replacement)}\nEl bot está listo para reemplazar automáticamente 🚦"
         bot.reply_to(message, response_text, parse_mode='MarkdownV2')
 
-    # 🔍 Detectar mensajes con la palabra clave y reemplazar conservando el formato original
     @bot.message_handler(func=lambda message: bot_settings['keyword'] and bot_settings['keyword'] in message.text)
     def auto_replace(message):
         keyword = bot_settings['keyword']
@@ -90,26 +86,32 @@ def start_secondary_bot(bot, bot_name):
         print(f"🔍 Mensaje recibido: {message.text}")
         print(f"🛠️ Reemplazando '{keyword}' con '{replacement}'")
         
-        # Reemplazar la palabra clave en el mensaje original
         new_text = message.text.replace(keyword, replacement)
-        formatted_text = escape_markdown(new_text, version=2)
+        formatted_text = escape_markdown(new_text)
         
-        # 🚮 Eliminar el mensaje original
         try:
             bot.delete_message(message.chat.id, message.message_id)
             print("🗑️ Mensaje original eliminado correctamente")
         except Exception as e:
             print(f"⚠️ No se pudo eliminar el mensaje: {e}")
 
-        # Enviar el mensaje reemplazado con el formato original
         bot.send_message(message.chat.id, formatted_text, parse_mode='MarkdownV2')
         print(f"📤 Mensaje enviado: {formatted_text}")
 
-    # 🚦 Iniciar el bot secundario con timeout prolongado
     print(f"🤖 Bot @{bot_name} en funcionamiento...")
     bot.polling(timeout=30, long_polling_timeout=30)
 
-# 🚦 Iniciar el Bot Master
+# 🚦 Función para escapar caracteres especiales en MarkdownV2
+def escape_markdown(text: str, version: int = 2) -> str:
+    """
+    Escapa los caracteres especiales para MarkdownV2.
+    """
+    if version == 2:
+        escape_chars = r"_*[]()~`>#+-=|{}.!"
+    else:
+        escape_chars = r"_*[]()~`>#+-=|{}.!"
+    
+    return ''.join(f'\\{char}' if char in escape_chars else char for char in text)
+
 print("🤖 Bot Master en funcionamiento...")
 bot_master.polling(timeout=30, long_polling_timeout=30)
-
