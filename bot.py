@@ -26,15 +26,15 @@ from telegram.ext import (
 # Configuración del Bot Maestro
 #############################################
 
-MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reemplaza con el token real
+MASTER_TELEGRAM_TOKEN = "7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g"  # Reemplaza con tu token real
 
 #############################################
-# Funciones auxiliares para trabajar con entidades
+# Funciones auxiliares para trabajar con entidades y formato
 #############################################
 
 def convert_to_html(text: str, entities: list) -> str:
     """
-    Reconstruye el texto a HTML aplicando las entidades (solo bold, en este ejemplo).
+    Reconstruye el texto a HTML aplicando las entidades (en este ejemplo, sólo bold).
     Si no hay entidades, retorna el texto sin cambios.
     """
     if not entities:
@@ -51,6 +51,20 @@ def convert_to_html(text: str, entities: list) -> str:
         last_index = ent.offset + ent.length
     result += text[last_index:]
     return result
+
+def get_message_text_and_entities(message: Update.message.__class__) -> (str, list):
+    """
+    Devuelve el texto y las entidades de formato del mensaje.
+    Si no hay entidades, retorna el texto y una lista vacía.
+    """
+    return (message.text or "", message.entities or [])
+
+def get_caption_text_and_entities(message: Update.message.__class__) -> (str, list):
+    """
+    Devuelve el caption y las entidades de formato del caption.
+    Si no hay entidades, retorna el caption y una lista vacía.
+    """
+    return (message.caption or "", message.caption_entities or [])
 
 def get_message_html(message: Update.message.__class__) -> str:
     if message.entities:
@@ -75,15 +89,18 @@ def get_caption_html(message: Update.message.__class__) -> str:
 def replace_text(html_text: str, detect_word: str, replace_word: str) -> str:
     """
     Procesa el contenido HTML para reemplazar todas las ocurrencias de detect_word por replace_word.
+    
     Si detect_word aparece dentro de una etiqueta <b>, se elimina el formato bold únicamente en la
-    porción correspondiente a detect_word; el resto se conserva.
-    Fuera de <b>, se hace un reemplazo simple.
-    Se utiliza un patrón basado en [A-Za-z0-9] para detectar detect_word.
+    porción correspondiente y se conserva el resto; fuera de <b>, se realiza una sustitución simple.
+    
+    Se utiliza un patrón basado en [A-Za-z0-9] para detectar detect_word, lo que permite detectar
+    correctamente etiquetas que comienzan con caracteres especiales (como "@").
     """
+    from bs4 import BeautifulSoup, NavigableString
     soup = BeautifulSoup(html_text, 'html.parser')
     pattern = re.compile(r'(?<![A-Za-z0-9])' + re.escape(detect_word) + r'(?![A-Za-z0-9])', re.IGNORECASE)
 
-    # Procesar nodos dentro de <b>
+    # Procesar nodos dentro de etiquetas <b>
     for bold_tag in soup.find_all("b"):
         if detect_word.lower() in bold_tag.get_text().lower():
             content = bold_tag.decode_contents(formatter="html")
@@ -117,7 +134,8 @@ def replace_text_simple(text: str, detect_word: str, replace_word: str) -> str:
 
 def process_text_entities(text: str, entities: list, detect_word: str, replace_word: str):
     """
-    Procesa el texto y las entidades, reemplazando detect_word por replace_word en las entidades bold.
+    Reconstruye el texto y la lista de entidades, reemplazando detect_word por replace_word
+    en las entidades de tipo bold. La parte de la etiqueta se inserta sin formato.
     """
     new_text = ""
     new_entities = []
@@ -126,7 +144,7 @@ def process_text_entities(text: str, entities: list, detect_word: str, replace_w
         new_text += text[current: ent.offset]
         seg = text[ent.offset: ent.offset+ent.length]
         if ent.type == "bold" and detect_word.lower() in seg.lower():
-            # Dividir seg en partes
+            # Dividimos el segmento en partes
             parts = re.split('(' + re.escape(detect_word) + ')', seg, flags=re.IGNORECASE)
             for part in parts:
                 if part.lower() == detect_word.lower():
@@ -202,7 +220,6 @@ async def rep_process_individual_message(update: Update, context: ContextTypes.D
     chat_id = update.effective_chat.id
     configs = context.bot_data.get("configurations", {})
     if chat_id not in configs or not configs[chat_id].get("active", False):
-        # Reenviamos el mensaje original sin cambios
         if update.message.text:
             await context.bot.send_message(chat_id=chat_id, text=update.message.text, parse_mode="HTML")
         elif update.message.caption:
@@ -256,7 +273,6 @@ async def rep_process_media_group(context: CallbackContext) -> None:
     messages = media_groups.pop(mg_id, [])
     if not messages:
         return
-    # Ordenamos por fecha y message_id para preservar el orden original
     messages.sort(key=lambda m: (m.date, m.message_id))
     chat_id = messages[0].chat.id
     configs = context.bot_data.get("configurations", {})
@@ -404,7 +420,9 @@ async def master_addbot_receive_token(update: Update, context: ContextTypes.DEFA
     return ConversationHandler.END
 
 def main() -> None:
-    logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+    logging.basicConfig(
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    )
     master_app = Application.builder().token(MASTER_TELEGRAM_TOKEN).build()
     if master_app.job_queue is None:
         jq = JobQueue()
