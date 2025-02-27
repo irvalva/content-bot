@@ -88,9 +88,10 @@ def start_secondary_bot(bot, bot_name):
         print(f"🔍 Mensaje recibido: {message.text}")
         print(f"🛠️ Reemplazando '{keyword}' con '{replacement}'")
 
+        # Reemplazar solo el texto, manteniendo las entidades de formato
         new_text = message.text.replace(keyword, replacement)
         entities = message.entities if message.entities else []
-        formatted_message = reconstruct_formatted_text(new_text, entities)
+        formatted_message = apply_formatting_to_text(new_text, entities, keyword, replacement)
 
         try:
             bot.delete_message(message.chat.id, message.message_id)
@@ -104,19 +105,21 @@ def start_secondary_bot(bot, bot_name):
     print(f"🤖 Bot @{bot_name} en funcionamiento...")
     bot.polling(timeout=30, long_polling_timeout=30)
 
-# 🚦 Función para aplicar el formato correcto solo a las palabras originales
-def reconstruct_formatted_text(text, entities):
+# 🚦 Función para aplicar el formato solo a las palabras originales sin cortar el texto
+def apply_formatting_to_text(text, entities, keyword, replacement):
     formatted_text = ""
     current_index = 0
 
     for entity in entities:
         start, end = entity.offset, entity.offset + entity.length
 
-        # Añadir el texto sin formato previo a la entidad
+        # Añadir texto sin formato antes de la entidad
         formatted_text += html.escape(text[current_index:start])
+
+        # Extraer el texto original de la entidad
         original_text = html.escape(text[start:end])
 
-        # Aplicar el formato solo a las entidades originales
+        # Aplicar el formato correcto a las entidades originales
         if entity.type == 'bold':
             formatted_text += f"<b>{original_text}</b>"
         elif entity.type == 'italic':
@@ -128,8 +131,9 @@ def reconstruct_formatted_text(text, entities):
 
         current_index = end
 
-    # Añadir el resto del texto sin formato
+    # Añadir el texto restante sin formato
     formatted_text += html.escape(text[current_index:])
+    
     return formatted_text
 
 print("🤖 Bot Master en funcionamiento...")
