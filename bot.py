@@ -105,36 +105,31 @@ def start_secondary_bot(bot, bot_name):
     print(f"🤖 Bot @{bot_name} en funcionamiento...")
     bot.polling(timeout=30, long_polling_timeout=30)
 
-# 🚦 Función para reconstruir el texto manejando UTF-16 y emojis correctamente
+# 🚦 Función mejorada para ajustar el formato basado en la diferencia de longitud
 def reconstruct_formatted_text(text, entities, keyword, replacement):
     formatted_text = ""
     current_index = 0
-
-    utf16_text = text.encode('utf-16-le')  # Codificar en UTF-16 para sincronizar índices
-    utf16_length = len(utf16_text) // 2  # Calcular la longitud en "caracteres visibles"
+    length_diff = len(replacement) - len(keyword)  # Diferencia de longitud para ajustar índices
 
     for entity in entities:
         start, end = entity.offset, entity.offset + entity.length
 
-        # Convertir los índices de UTF-16 a UTF-8
-        utf8_start = len(utf16_text[:start * 2].decode('utf-16-le'))
-        utf8_end = len(utf16_text[:end * 2].decode('utf-16-le'))
+        # Ajustar índices si la entidad está después del reemplazo
+        if start > current_index:
+            start += length_diff
+            end += length_diff
 
-        # Añadir texto sin formato antes de la entidad
-        formatted_text += html.escape(text[current_index:utf8_start])
-        original_text = html.escape(text[utf8_start:utf8_end])
+        # Añadir texto sin formato previo a la entidad
+        formatted_text += html.escape(text[current_index:start])
+        original_text = html.escape(text[start:end])
 
-        # Aplicar el reemplazo si es necesario
-        if keyword in original_text:
-            original_text = original_text.replace(keyword, replacement)
-
-        # Aplicar el formato de acuerdo al tipo de entidad
+        # Aplicar el formato solo si la entidad coincide con la palabra original
         if entity.type == 'bold':
             formatted_text += f"<b>{original_text}</b>"
         else:
             formatted_text += original_text
 
-        current_index = utf8_end
+        current_index = end
 
     # Añadir el resto del texto sin formato
     formatted_text += html.escape(text[current_index:])
@@ -142,3 +137,4 @@ def reconstruct_formatted_text(text, entities, keyword, replacement):
 
 print("🤖 Bot Master en funcionamiento...")
 bot_master.polling(timeout=30, long_polling_timeout=30)
+
