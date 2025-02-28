@@ -1,6 +1,7 @@
 import telebot
 import threading
 import html
+import re
 
 # Token del Bot Master
 MASTER_TOKEN = '7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g'
@@ -88,10 +89,9 @@ def start_secondary_bot(bot, bot_name):
         print(f"🔍 Mensaje recibido: {message.text}")
         print(f"🛠️ Reemplazando '{keyword}' con '{replacement}'")
 
-        # Reemplazar solo el texto, manteniendo las entidades de formato
         new_text = message.text.replace(keyword, replacement)
         entities = message.entities if message.entities else []
-        formatted_message = apply_formatting_to_text(new_text, entities, keyword, replacement)
+        formatted_message = reconstruct_formatted_text(new_text, entities, keyword, replacement)
 
         try:
             bot.delete_message(message.chat.id, message.message_id)
@@ -105,35 +105,39 @@ def start_secondary_bot(bot, bot_name):
     print(f"🤖 Bot @{bot_name} en funcionamiento...")
     bot.polling(timeout=30, long_polling_timeout=30)
 
-# 🚦 Función para aplicar el formato solo a las palabras originales sin cortar el texto
-def apply_formatting_to_text(text, entities, keyword, replacement):
+# 🚦 Función para reconstruir el texto manejando UTF-16 y emojis correctamente
+def reconstruct_formatted_text(text, entities, keyword, replacement):
     formatted_text = ""
     current_index = 0
+
+    utf16_text = text.encode('utf-16-le')  # Codificar en UTF-16 para sincronizar índices
+    utf16_length = len(utf16_text) // 2  # Calcular la longitud en "caracteres visibles"
 
     for entity in entities:
         start, end = entity.offset, entity.offset + entity.length
 
+        # Convertir los índices de UTF-16 a UTF-8
+        utf8_start = len(utf16_text[:start * 2].decode('utf-16-le'))
+        utf8_end = len(utf16_text[:end * 2].decode('utf-16-le'))
+
         # Añadir texto sin formato antes de la entidad
-        formatted_text += html.escape(text[current_index:start])
+        formatted_text += html.escape(text[current_index:utf8_start])
+        original_text = html.escape(text[utf8_start:utf8_end])
 
-        # Extraer el texto original de la entidad
-        original_text = html.escape(text[start:end])
+        # Aplicar el reemplazo si es necesario
+        if keyword in original_text:
+            original_text = original_text.replace(keyword, replacement)
 
-        # Aplicar el formato correcto a las entidades originales
+        # Aplicar el formato de acuerdo al tipo de entidad
         if entity.type == 'bold':
             formatted_text += f"<b>{original_text}</b>"
-        elif entity.type == 'italic':
-            formatted_text += f"<i>{original_text}</i>"
-        elif entity.type == 'underline':
-            formatted_text += f"<u>{original_text}</u>"
         else:
             formatted_text += original_text
 
-        current_index = end
+        current_index = utf8_end
 
-    # Añadir el texto restante sin formato
+    # Añadir el resto del texto sin formato
     formatted_text += html.escape(text[current_index:])
-    
     return formatted_text
 
 print("🤖 Bot Master en funcionamiento...")
