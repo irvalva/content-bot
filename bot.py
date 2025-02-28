@@ -1,4 +1,4 @@
-mport telebot
+import telebot
 import threading
 import html
 import re
