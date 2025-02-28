@@ -5,12 +5,12 @@ import re
 from telebot.types import InputMediaPhoto, InputMediaVideo, InputMediaDocument, InputMediaAudio
 
 # =========================
-# Funciones para conversión y reconstrucción de formato
+# Funciones de conversión y reconstrucción de formato
 # =========================
 
 def tg_to_py_index(text, tg_offset):
     """
-    Convierte un offset basado en UTF-16 (de Telegram) al índice de Python.
+    Convierte un offset (en code units UTF-16 que usa Telegram) al índice real en el string de Python.
     """
     code_units = 0
     for i, ch in enumerate(text):
@@ -22,8 +22,8 @@ def tg_to_py_index(text, tg_offset):
 
 def convert_entity_offsets(text, entities):
     """
-    Convierte cada entidad de Telegram (offset y length en UTF-16) a índices de Python.
-    Retorna una lista de diccionarios con 'start', 'end' y 'type'.
+    Convierte cada entidad (con offset y length en UTF-16) a índices y longitudes en el string de Python.
+    Retorna una lista ordenada de diccionarios con 'start', 'end' y 'type'.
     """
     converted = []
     for entity in entities:
@@ -38,23 +38,21 @@ def convert_entity_offsets(text, entities):
 
 def reconstruct_formatted_text(original_text, entities, keyword, replacement):
     """
-    Reconstruye el mensaje final en HTML aplicando el reemplazo en cada segmento de texto,
-    respetando el formato (entidades) recibido.
+    Reconstruye el mensaje aplicando el reemplazo en cada segmento y conservando el formato (HTML)
+    indicado por las entidades.
     """
     conv_entities = convert_entity_offsets(original_text, entities)
     result = ""
     current_index = 0
     for ent in conv_entities:
-        # Segmento sin formato anterior a la entidad
+        # Procesa el segmento sin formato anterior a la entidad
         plain_segment = original_text[current_index:ent['start']]
         plain_segment = plain_segment.replace(keyword, replacement)
         result += html.escape(plain_segment)
-        
-        # Segmento con formato (entidad)
+        # Procesa el segmento con formato (entidad)
         entity_text = original_text[ent['start']:ent['end']]
         entity_text = entity_text.replace(keyword, replacement)
         escaped_entity_text = html.escape(entity_text)
-        
         if ent['type'] == 'bold':
             result += f"<b>{escaped_entity_text}</b>"
         elif ent['type'] == 'italic':
@@ -69,7 +67,6 @@ def reconstruct_formatted_text(original_text, entities, keyword, replacement):
             result += f"<pre>{escaped_entity_text}</pre>"
         else:
             result += escaped_entity_text
-
         current_index = ent['end']
     # Procesa el resto del texto
     plain_segment = original_text[current_index:]
@@ -103,31 +100,21 @@ def add_bot(message):
         new_bot = telebot.TeleBot(token, parse_mode='HTML')
         bot_info = new_bot.get_me()
         bot_name = bot_info.username
-
         if bot_name in connected_bots:
             bot_master.reply_to(message, f"❗️ El bot @{bot_name} ya está conectado.")
             return
-
         connected_bots[bot_name] = new_bot
         bot_master.reply_to(message, f"✅ Token aceptado. El bot @{bot_name} está conectado.")
-
-        # Ejecutar el bot secundario en un hilo separado
         threading.Thread(target=start_secondary_bot, args=(new_bot, bot_name)).start()
-
     except Exception as e:
-        error_message = f"❌ Token inválido: {str(e)}"
-        bot_master.reply_to(message, error_message)
+        bot_master.reply_to(message, f"❌ Token inválido: {str(e)}")
 
 # =========================
 # Bot Secundario y Procesamiento de Mensajes
 # =========================
 
 def start_secondary_bot(bot, bot_name):
-    # Diccionario para almacenar la palabra clave y su reemplazo
-    bot_settings = {
-        'keyword': None,
-        'replacement': None
-    }
+    bot_settings = {'keyword': None, 'replacement': None}
 
     @bot.message_handler(commands=['start'])
     def greet(message):
@@ -162,7 +149,7 @@ def start_secondary_bot(bot, bot_name):
             bot.delete_message(chat_id, message.message_id)
         except Exception as e:
             print("No se pudo eliminar el mensaje:", e)
-
+        # Procesa según el tipo de contenido
         if message.content_type == 'text':
             text = message.text
             if keyword in text:
@@ -171,59 +158,28 @@ def start_secondary_bot(bot, bot_name):
             else:
                 new_text = text
             bot.send_message(chat_id, new_text, parse_mode='HTML')
-
-        elif message.content_type == 'photo':
-            caption = message.caption
+        elif message.content_type in ['photo', 'video', 'document', 'audio', 'voice']:
+            caption = message.caption if message.caption else ""
             if caption and keyword in caption:
-                if message.caption_entities:
-                    caption = reconstruct_formatted_text(caption, message.caption_entities, keyword, replacement)
-                else:
-                    caption = caption.replace(keyword, replacement)
-            bot.send_photo(chat_id, message.photo[-1].file_id, caption=caption, parse_mode='HTML')
-
-        elif message.content_type == 'video':
-            caption = message.caption
-            if caption and keyword in caption:
-                if message.caption_entities:
-                    caption = reconstruct_formatted_text(caption, message.caption_entities, keyword, replacement)
-                else:
-                    caption = caption.replace(keyword, replacement)
-            bot.send_video(chat_id, message.video.file_id, caption=caption, parse_mode='HTML')
-
+                new_caption = (reconstruct_formatted_text(caption, message.caption_entities, keyword, replacement)
+                               if message.caption_entities else caption.replace(keyword, replacement))
+            else:
+                new_caption = caption
+            if message.content_type == 'photo':
+                bot.send_photo(chat_id, message.photo[-1].file_id, caption=new_caption, parse_mode='HTML')
+            elif message.content_type == 'video':
+                bot.send_video(chat_id, message.video.file_id, caption=new_caption, parse_mode='HTML')
+            elif message.content_type == 'document':
+                bot.send_document(chat_id, message.document.file_id, caption=new_caption, parse_mode='HTML')
+            elif message.content_type == 'audio':
+                bot.send_audio(chat_id, message.audio.file_id, caption=new_caption, parse_mode='HTML')
+            elif message.content_type == 'voice':
+                bot.send_voice(chat_id, message.voice.file_id, caption=new_caption, parse_mode='HTML')
         elif message.content_type == 'video_note':
-            # Los video circulares (video_note) no admiten caption
+            # Los video_note (videos circulares) no admiten caption
             bot.send_video_note(chat_id, message.video_note.file_id)
-
-        elif message.content_type == 'document':
-            caption = message.caption
-            if caption and keyword in caption:
-                if message.caption_entities:
-                    caption = reconstruct_formatted_text(caption, message.caption_entities, keyword, replacement)
-                else:
-                    caption = caption.replace(keyword, replacement)
-            bot.send_document(chat_id, message.document.file_id, caption=caption, parse_mode='HTML')
-
-        elif message.content_type == 'audio':
-            caption = message.caption
-            if caption and keyword in caption:
-                if message.caption_entities:
-                    caption = reconstruct_formatted_text(caption, message.caption_entities, keyword, replacement)
-                else:
-                    caption = caption.replace(keyword, replacement)
-            bot.send_audio(chat_id, message.audio.file_id, caption=caption, parse_mode='HTML')
-
-        elif message.content_type == 'voice':
-            caption = message.caption
-            if caption and keyword in caption:
-                if message.caption_entities:
-                    caption = reconstruct_formatted_text(caption, message.caption_entities, keyword, replacement)
-                else:
-                    caption = caption.replace(keyword, replacement)
-            bot.send_voice(chat_id, message.voice.file_id, caption=caption, parse_mode='HTML')
-
         elif message.content_type == 'sticker':
             bot.send_sticker(chat_id, message.sticker.file_id)
-
         else:
             try:
                 bot.copy_message(chat_id, chat_id, message.message_id)
@@ -236,26 +192,25 @@ def start_secondary_bot(bot, bot_name):
             del media_groups[media_group_id]
         if media_group_id in media_group_timers:
             del media_group_timers[media_group_id]
-
         group_messages.sort(key=lambda m: m.message_id)
         media_list = []
         for msg in group_messages:
-            caption = msg.caption
+            caption = msg.caption if msg.caption else ""
             if caption and keyword in caption:
-                if msg.caption_entities:
-                    caption = reconstruct_formatted_text(caption, msg.caption_entities, keyword, replacement)
-                else:
-                    caption = caption.replace(keyword, replacement)
+                new_caption = (reconstruct_formatted_text(caption, msg.caption_entities, keyword, replacement)
+                               if msg.caption_entities else caption.replace(keyword, replacement))
+            else:
+                new_caption = caption
             if msg.content_type == 'photo':
-                media_list.append(InputMediaPhoto(media=msg.photo[-1].file_id, caption=caption, parse_mode='HTML'))
+                media_list.append(InputMediaPhoto(media=msg.photo[-1].file_id, caption=new_caption, parse_mode='HTML'))
             elif msg.content_type == 'video':
-                media_list.append(InputMediaVideo(media=msg.video.file_id, caption=caption, parse_mode='HTML'))
+                media_list.append(InputMediaVideo(media=msg.video.file_id, caption=new_caption, parse_mode='HTML'))
             elif msg.content_type == 'document':
-                media_list.append(InputMediaDocument(media=msg.document.file_id, caption=caption, parse_mode='HTML'))
+                media_list.append(InputMediaDocument(media=msg.document.file_id, caption=new_caption, parse_mode='HTML'))
             elif msg.content_type == 'audio':
-                media_list.append(InputMediaAudio(media=msg.audio.file_id, caption=caption, parse_mode='HTML'))
+                media_list.append(InputMediaAudio(media=msg.audio.file_id, caption=new_caption, parse_mode='HTML'))
             elif msg.content_type == 'video_note':
-                # Los video_note no se admiten en media groups; se procesan individualmente.
+                # Los video_note no se admiten en media group; se procesan individualmente.
                 process_single_message(msg, bot, keyword, replacement)
             else:
                 process_single_message(msg, bot, keyword, replacement)
@@ -272,15 +227,13 @@ def start_secondary_bot(bot, bot_name):
     def handle_all(message):
         keyword = bot_settings['keyword']
         replacement = bot_settings['replacement']
-
-        # Si no se han configurado palabra clave y reemplazo, se reenvía el mensaje original
+        # Si no se ha configurado palabra clave y reemplazo, simplemente copia el mensaje
         if keyword is None or replacement is None:
             try:
                 bot.copy_message(message.chat.id, message.chat.id, message.message_id)
             except Exception as e:
                 print("Error copiando mensaje sin configuración:", e)
             return
-
         # Si el mensaje forma parte de un media group, agruparlo
         if hasattr(message, 'media_group_id') and message.media_group_id:
             mg_id = message.media_group_id
@@ -302,5 +255,4 @@ def start_secondary_bot(bot, bot_name):
 
 print("🤖 Bot Master en funcionamiento...")
 bot_master.polling(timeout=30, long_polling_timeout=30)
-
 
