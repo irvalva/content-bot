@@ -1,7 +1,6 @@
 import telebot
 import threading
 import html
-import re
 
 # Token del Bot Master
 MASTER_TOKEN = '7769164457:AAGn_cwagig2jMpWyKubGIv01-kwZ1VuW0g'
@@ -105,31 +104,38 @@ def start_secondary_bot(bot, bot_name):
     print(f"🤖 Bot @{bot_name} en funcionamiento...")
     bot.polling(timeout=30, long_polling_timeout=30)
 
-# 🚦 Función para evitar duplicación o texto innecesario
+# 🚦 Nueva función para dividir el formato antes, durante y después de la palabra reemplazada
 def reconstruct_formatted_text(text, entities, keyword, replacement):
     formatted_text = ""
     current_index = 0
-    length_diff = len(replacement) - len(keyword)
+
+    keyword_start = text.find(replacement)
+    keyword_end = keyword_start + len(replacement)
 
     for entity in entities:
         start, end = entity.offset, entity.offset + entity.length
 
-        # Añadir texto sin formato previo a la entidad
-        formatted_text += html.escape(text[current_index:start])
-        original_text = html.escape(text[start:end])
+        # Antes de la palabra reemplazada
+        if end <= keyword_start:
+            formatted_text += html.escape(text[current_index:start])
+            original_text = html.escape(text[start:end])
+            if entity.type == 'bold':
+                formatted_text += f"<b>{original_text}</b>"
+            else:
+                formatted_text += original_text
 
-        # Reemplazar la palabra clave con la de reemplazo sin duplicar
-        if keyword in original_text:
-            original_text = original_text.replace(keyword, replacement)
-
-        if entity.type == 'bold':
-            formatted_text += f"<b>{original_text}</b>"
-        else:
-            formatted_text += original_text
+        # Después de la palabra reemplazada
+        elif start >= keyword_end:
+            formatted_text += html.escape(text[current_index:start])
+            original_text = html.escape(text[start:end])
+            if entity.type == 'bold':
+                formatted_text += f"<b>{original_text}</b>"
+            else:
+                formatted_text += original_text
 
         current_index = end
 
-    # Añadir el resto del texto sin formato
+    # Resto del texto sin formato
     formatted_text += html.escape(text[current_index:])
     return formatted_text
 
