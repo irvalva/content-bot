@@ -105,25 +105,23 @@ def start_secondary_bot(bot, bot_name):
     print(f"🤖 Bot @{bot_name} en funcionamiento...")
     bot.polling(timeout=30, long_polling_timeout=30)
 
-# 🚦 Función mejorada para ajustar el formato basado en la diferencia de longitud
+# 🚦 Función para evitar duplicación o texto innecesario
 def reconstruct_formatted_text(text, entities, keyword, replacement):
     formatted_text = ""
     current_index = 0
-    length_diff = len(replacement) - len(keyword)  # Diferencia de longitud para ajustar índices
+    length_diff = len(replacement) - len(keyword)
 
     for entity in entities:
         start, end = entity.offset, entity.offset + entity.length
-
-        # Ajustar índices si la entidad está después del reemplazo
-        if start > current_index:
-            start += length_diff
-            end += length_diff
 
         # Añadir texto sin formato previo a la entidad
         formatted_text += html.escape(text[current_index:start])
         original_text = html.escape(text[start:end])
 
-        # Aplicar el formato solo si la entidad coincide con la palabra original
+        # Reemplazar la palabra clave con la de reemplazo sin duplicar
+        if keyword in original_text:
+            original_text = original_text.replace(keyword, replacement)
+
         if entity.type == 'bold':
             formatted_text += f"<b>{original_text}</b>"
         else:
