@@ -2,10 +2,10 @@ import telebot
 import threading
 import html
 import re
-from telebot.types import InputMediaPhoto, InputMediaVideo, InputMediaDocument
+from telebot.types import InputMediaPhoto, InputMediaVideo, InputMediaDocument, InputMediaAudio
 
 # =========================
-# Funciones para convertir y reconstruir texto formateado
+# Funciones para conversión y reconstrucción de formato
 # =========================
 
 def tg_to_py_index(text, tg_offset):
@@ -45,17 +45,16 @@ def reconstruct_formatted_text(original_text, entities, keyword, replacement):
     result = ""
     current_index = 0
     for ent in conv_entities:
-        # Procesa el segmento sin formato anterior a la entidad
+        # Segmento sin formato anterior a la entidad
         plain_segment = original_text[current_index:ent['start']]
         plain_segment = plain_segment.replace(keyword, replacement)
         result += html.escape(plain_segment)
         
-        # Procesa el segmento de la entidad
+        # Segmento con formato (entidad)
         entity_text = original_text[ent['start']:ent['end']]
         entity_text = entity_text.replace(keyword, replacement)
         escaped_entity_text = html.escape(entity_text)
         
-        # Aplica la etiqueta según el tipo de entidad
         if ent['type'] == 'bold':
             result += f"<b>{escaped_entity_text}</b>"
         elif ent['type'] == 'italic':
@@ -72,14 +71,14 @@ def reconstruct_formatted_text(original_text, entities, keyword, replacement):
             result += escaped_entity_text
 
         current_index = ent['end']
-    # Procesa el resto del texto sin entidad
+    # Procesa el resto del texto
     plain_segment = original_text[current_index:]
     plain_segment = plain_segment.replace(keyword, replacement)
     result += html.escape(plain_segment)
     return result
 
 # =========================
-# Variables globales para agrupar media groups
+# Variables para agrupar media groups
 # =========================
 
 media_groups = {}         # key: media_group_id, value: lista de mensajes
@@ -157,53 +156,81 @@ def start_secondary_bot(bot, bot_name):
         bot.reply_to(message, f"✅ <b>Palabra de reemplazo</b> configurada: {replacement}\nEl bot está listo para reemplazar automáticamente 🚦", parse_mode='HTML')
 
     def process_single_message(message, bot, keyword, replacement):
-        """
-        Procesa mensajes individuales (no pertenecientes a media group), reemplazando
-        el texto o caption si corresponde; de lo contrario, copia el mensaje original.
-        """
+        chat_id = message.chat.id
+        # Se intenta eliminar el mensaje original
         try:
-            bot.delete_message(message.chat.id, message.message_id)
+            bot.delete_message(chat_id, message.message_id)
         except Exception as e:
             print("No se pudo eliminar el mensaje:", e)
 
-        # Si es un mensaje de texto
-        if hasattr(message, 'text') and message.text:
-            if keyword in message.text:
-                new_text = (reconstruct_formatted_text(message.text, message.entities, keyword, replacement)
-                            if message.entities else message.text.replace(keyword, replacement))
+        if message.content_type == 'text':
+            text = message.text
+            if keyword in text:
+                new_text = (reconstruct_formatted_text(text, message.entities, keyword, replacement)
+                            if message.entities else text.replace(keyword, replacement))
             else:
-                new_text = message.text
-            bot.send_message(message.chat.id, new_text, parse_mode='HTML')
-            return
+                new_text = text
+            bot.send_message(chat_id, new_text, parse_mode='HTML')
 
-        # Si tiene caption (por ejemplo, foto, video, audio, documento)
-        if hasattr(message, 'caption') and message.caption:
-            if keyword in message.caption:
-                new_caption = (reconstruct_formatted_text(message.caption, message.caption_entities, keyword, replacement)
-                               if message.caption_entities else message.caption.replace(keyword, replacement))
-            else:
-                new_caption = message.caption
+        elif message.content_type == 'photo':
+            caption = message.caption
+            if caption and keyword in caption:
+                if message.caption_entities:
+                    caption = reconstruct_formatted_text(caption, message.caption_entities, keyword, replacement)
+                else:
+                    caption = caption.replace(keyword, replacement)
+            bot.send_photo(chat_id, message.photo[-1].file_id, caption=caption, parse_mode='HTML')
 
-            if message.photo:
-                bot.send_photo(message.chat.id, message.photo[-1].file_id, caption=new_caption, parse_mode='HTML')
-            elif message.video:
-                bot.send_video(message.chat.id, message.video.file_id, caption=new_caption, parse_mode='HTML')
-            elif message.document:
-                bot.send_document(message.chat.id, message.document.file_id, caption=new_caption, parse_mode='HTML')
-            elif message.audio:
-                bot.send_audio(message.chat.id, message.audio.file_id, caption=new_caption, parse_mode='HTML')
-            else:
-                bot.copy_message(message.chat.id, message.chat.id, message.message_id)
-            return
+        elif message.content_type == 'video':
+            caption = message.caption
+            if caption and keyword in caption:
+                if message.caption_entities:
+                    caption = reconstruct_formatted_text(caption, message.caption_entities, keyword, replacement)
+                else:
+                    caption = caption.replace(keyword, replacement)
+            bot.send_video(chat_id, message.video.file_id, caption=caption, parse_mode='HTML')
 
-        # Si el mensaje no tiene texto ni caption, simplemente lo copia
-        bot.copy_message(message.chat.id, message.chat.id, message.message_id)
+        elif message.content_type == 'video_note':
+            # Los video circulares (video_note) no admiten caption
+            bot.send_video_note(chat_id, message.video_note.file_id)
+
+        elif message.content_type == 'document':
+            caption = message.caption
+            if caption and keyword in caption:
+                if message.caption_entities:
+                    caption = reconstruct_formatted_text(caption, message.caption_entities, keyword, replacement)
+                else:
+                    caption = caption.replace(keyword, replacement)
+            bot.send_document(chat_id, message.document.file_id, caption=caption, parse_mode='HTML')
+
+        elif message.content_type == 'audio':
+            caption = message.caption
+            if caption and keyword in caption:
+                if message.caption_entities:
+                    caption = reconstruct_formatted_text(caption, message.caption_entities, keyword, replacement)
+                else:
+                    caption = caption.replace(keyword, replacement)
+            bot.send_audio(chat_id, message.audio.file_id, caption=caption, parse_mode='HTML')
+
+        elif message.content_type == 'voice':
+            caption = message.caption
+            if caption and keyword in caption:
+                if message.caption_entities:
+                    caption = reconstruct_formatted_text(caption, message.caption_entities, keyword, replacement)
+                else:
+                    caption = caption.replace(keyword, replacement)
+            bot.send_voice(chat_id, message.voice.file_id, caption=caption, parse_mode='HTML')
+
+        elif message.content_type == 'sticker':
+            bot.send_sticker(chat_id, message.sticker.file_id)
+
+        else:
+            try:
+                bot.copy_message(chat_id, chat_id, message.message_id)
+            except Exception as e:
+                print("Error copiando mensaje fallback:", e)
 
     def process_media_group(media_group_id, chat_id, bot, keyword, replacement):
-        """
-        Procesa un grupo de medios (media group) en conjunto, asegurando que se
-        mantenga el orden y se reemplacen los textos en las captions si existen.
-        """
         group_messages = media_groups.get(media_group_id, [])
         if media_group_id in media_groups:
             del media_groups[media_group_id]
@@ -213,50 +240,52 @@ def start_secondary_bot(bot, bot_name):
         group_messages.sort(key=lambda m: m.message_id)
         media_list = []
         for msg in group_messages:
-            caption = None
-            if msg.caption:
-                if keyword in msg.caption:
-                    caption = (reconstruct_formatted_text(msg.caption, msg.caption_entities, keyword, replacement)
-                               if msg.caption_entities else msg.caption.replace(keyword, replacement))
+            caption = msg.caption
+            if caption and keyword in caption:
+                if msg.caption_entities:
+                    caption = reconstruct_formatted_text(caption, msg.caption_entities, keyword, replacement)
                 else:
-                    caption = msg.caption
-
-            # Dependiendo del tipo de medio, se arma el InputMedia correspondiente:
-            if msg.photo:
+                    caption = caption.replace(keyword, replacement)
+            if msg.content_type == 'photo':
                 media_list.append(InputMediaPhoto(media=msg.photo[-1].file_id, caption=caption, parse_mode='HTML'))
-            elif msg.video:
+            elif msg.content_type == 'video':
                 media_list.append(InputMediaVideo(media=msg.video.file_id, caption=caption, parse_mode='HTML'))
-            elif msg.document:
+            elif msg.content_type == 'document':
                 media_list.append(InputMediaDocument(media=msg.document.file_id, caption=caption, parse_mode='HTML'))
+            elif msg.content_type == 'audio':
+                media_list.append(InputMediaAudio(media=msg.audio.file_id, caption=caption, parse_mode='HTML'))
+            elif msg.content_type == 'video_note':
+                # Los video_note no se admiten en media groups; se procesan individualmente.
+                process_single_message(msg, bot, keyword, replacement)
             else:
-                # Si no se reconoce, se procesa individualmente
                 process_single_message(msg, bot, keyword, replacement)
         if media_list:
             bot.send_media_group(chat_id, media=media_list)
+        # Se eliminan los mensajes originales del grupo
+        for msg in group_messages:
+            try:
+                bot.delete_message(chat_id, msg.message_id)
+            except Exception as e:
+                print("Error al eliminar mensaje del media group:", e)
 
-    @bot.message_handler(content_types=['text', 'photo', 'video', 'video_note', 'audio', 'document', 'sticker'])
+    @bot.message_handler(content_types=['text', 'photo', 'video', 'video_note', 'audio', 'voice', 'document', 'sticker'])
     def handle_all(message):
-        """
-        Handler genérico para procesar cualquier mensaje. Si el mensaje forma parte de
-        un media group se agrupa para procesarlo junto con los demás; en caso contrario se
-        procesa individualmente.
-        """
         keyword = bot_settings['keyword']
         replacement = bot_settings['replacement']
 
-        # Si aún no se han configurado palabra clave y reemplazo, simplemente se copia el mensaje
+        # Si no se han configurado palabra clave y reemplazo, se reenvía el mensaje original
         if keyword is None or replacement is None:
             try:
                 bot.copy_message(message.chat.id, message.chat.id, message.message_id)
             except Exception as e:
-                print("Error copiando mensaje:", e)
+                print("Error copiando mensaje sin configuración:", e)
             return
 
+        # Si el mensaje forma parte de un media group, agruparlo
         if hasattr(message, 'media_group_id') and message.media_group_id:
             mg_id = message.media_group_id
             if mg_id not in media_groups:
                 media_groups[mg_id] = []
-                # Se programa el procesamiento del media group después de 1 segundo
                 timer = threading.Timer(1.0, process_media_group, args=(mg_id, message.chat.id, bot, keyword, replacement))
                 media_group_timers[mg_id] = timer
                 timer.start()
@@ -273,4 +302,5 @@ def start_secondary_bot(bot, bot_name):
 
 print("🤖 Bot Master en funcionamiento...")
 bot_master.polling(timeout=30, long_polling_timeout=30)
+
 
