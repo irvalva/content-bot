@@ -3,9 +3,10 @@ import threading
 import html
 import re
 from telebot.types import InputMediaPhoto, InputMediaVideo, InputMediaDocument, InputMediaAudio
+from bs4 import BeautifulSoup  # Requiere: pip install beautifulsoup4
 
 # =========================
-# Funciones de conversión y reconstrucción de formato
+# Funciones de conversión y reconstrucción de formato (para mensajes de texto y captions con entities)
 # =========================
 
 def tg_to_py_index(text, tg_offset):
@@ -73,6 +74,22 @@ def reconstruct_formatted_text(original_text, entities, keyword, replacement):
     plain_segment = plain_segment.replace(keyword, replacement)
     result += html.escape(plain_segment)
     return result
+
+# =========================
+# Función para reconstruir captions ya en HTML (sin entities) usando BeautifulSoup
+# =========================
+
+def reconstruct_html_caption(caption, keyword, replacement):
+    """
+    Parsea el caption HTML y reemplaza la palabra clave en los nodos de texto, 
+    preservando la estructura y formato HTML.
+    """
+    soup = BeautifulSoup(caption, "html.parser")
+    # Recorremos todos los nodos de texto para realizar el reemplazo
+    for element in soup.find_all(text=True):
+        new_text = element.replace(keyword, replacement)
+        element.replace_with(new_text)
+    return str(soup)
 
 # =========================
 # Variables para agrupar media groups
@@ -161,8 +178,13 @@ def start_secondary_bot(bot, bot_name):
         elif message.content_type in ['photo', 'video', 'document', 'audio', 'voice']:
             caption = message.caption if message.caption else ""
             if caption and keyword in caption:
-                new_caption = (reconstruct_formatted_text(caption, message.caption_entities, keyword, replacement)
-                               if message.caption_entities else caption.replace(keyword, replacement))
+                if message.caption_entities:
+                    new_caption = reconstruct_formatted_text(caption, message.caption_entities, keyword, replacement)
+                elif '<' in caption and '>' in caption:
+                    # Asumimos que el caption ya viene en HTML y lo procesamos con BeautifulSoup
+                    new_caption = reconstruct_html_caption(caption, keyword, replacement)
+                else:
+                    new_caption = caption.replace(keyword, replacement)
             else:
                 new_caption = caption
             if message.content_type == 'photo':
@@ -197,8 +219,12 @@ def start_secondary_bot(bot, bot_name):
         for msg in group_messages:
             caption = msg.caption if msg.caption else ""
             if caption and keyword in caption:
-                new_caption = (reconstruct_formatted_text(caption, msg.caption_entities, keyword, replacement)
-                               if msg.caption_entities else caption.replace(keyword, replacement))
+                if msg.caption_entities:
+                    new_caption = reconstruct_formatted_text(caption, msg.caption_entities, keyword, replacement)
+                elif '<' in caption and '>' in caption:
+                    new_caption = reconstruct_html_caption(caption, keyword, replacement)
+                else:
+                    new_caption = caption.replace(keyword, replacement)
             else:
                 new_caption = caption
             if msg.content_type == 'photo':
@@ -227,7 +253,7 @@ def start_secondary_bot(bot, bot_name):
     def handle_all(message):
         keyword = bot_settings['keyword']
         replacement = bot_settings['replacement']
-        # Si no se ha configurado palabra clave y reemplazo, simplemente copia el mensaje
+        # Si no se ha configurado palabra clave y reemplazo, se copia el mensaje original
         if keyword is None or replacement is None:
             try:
                 bot.copy_message(message.chat.id, message.chat.id, message.message_id)
@@ -255,4 +281,3 @@ def start_secondary_bot(bot, bot_name):
 
 print("🤖 Bot Master en funcionamiento...")
 bot_master.polling(timeout=30, long_polling_timeout=30)
-
